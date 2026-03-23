@@ -18,8 +18,10 @@ class BillingService
     public function __construct(
         protected HitPayClient $hitPayClient,
         protected SubscriptionStateMachine $stateMachine,
-    ) {}
-public function startCheckout(User $user, Plan $plan, Site $site): array
+    ) {
+    }
+
+    public function startCheckout(User $user, Plan $plan, Site $site): array
     {
         return DB::transaction(function () use ($user, $plan, $site) {
             $subscription = Subscription::query()->updateOrCreate(
@@ -35,7 +37,8 @@ public function startCheckout(User $user, Plan $plan, Site $site): array
                     'starts_at' => now(),
                 ]
             );
-                        if (! $subscription->provider_plan_id) {
+
+            if (! $subscription->provider_plan_id) {
                 $planPayload = $this->hitPayClient->createPlan([
                     'name' => $plan->name,
                     'description' => $plan->description ?? $plan->name,
@@ -47,11 +50,13 @@ public function startCheckout(User $user, Plan $plan, Site $site): array
 
                 $subscription->update([
                     'provider_plan_id' => $planPayload['id'] ?? null,
-                    'meta' => array_merge($subscription->meta ?? [], ['provider_plan_payload' => $planPayload]),
+                    'meta' => array_merge($subscription->meta ?? [], [
+                        'provider_plan_payload' => $planPayload,
+                    ]),
                 ]);
             }
 
-                        $invoice = Invoice::create([
+            $invoice = Invoice::create([
                 'subscription_id' => $subscription->id,
                 'user_id' => $user->id,
                 'site_id' => $site->id,
@@ -60,7 +65,9 @@ public function startCheckout(User $user, Plan $plan, Site $site): array
                 'currency' => config('services.hitpay.currency', 'MYR'),
                 'amount' => $plan->price,
                 'billing_period_start' => now(),
-                'billing_period_end' => ($plan->billing_cycle ?? 'monthly') === 'yearly' ? now()->copy()->addYear() : now()->copy()->addMonth(),
+                'billing_period_end' => ($plan->billing_cycle ?? 'monthly') === 'yearly'
+                    ? now()->copy()->addYear()
+                    : now()->copy()->addMonth(),
                 'due_at' => now(),
             ]);
 
@@ -81,7 +88,9 @@ public function startCheckout(User $user, Plan $plan, Site $site): array
             $subscription->update([
                 'provider_subscription_id' => $recurring['id'] ?? null,
                 'provider_customer_reference' => $reference,
-                'meta' => array_merge($subscription->meta ?? [], ['provider_subscription_payload' => $recurring]),
+                'meta' => array_merge($subscription->meta ?? [], [
+                    'provider_subscription_payload' => $recurring,
+                ]),
             ]);
 
             $site->update([
@@ -97,6 +106,7 @@ public function startCheckout(User $user, Plan $plan, Site $site): array
             ];
         });
     }
+
     public function handleSuccessfulPayment(Subscription $subscription, Invoice $invoice, array $normalized): void
     {
         DB::transaction(function () use ($subscription, $invoice, $normalized) {
@@ -117,13 +127,15 @@ public function startCheckout(User $user, Plan $plan, Site $site): array
                 'succeeded_at' => now(),
                 'payload' => $normalized['raw'],
             ]);
-                        if ($normalized['brand'] || $normalized['last4']) {
+
+            if ($normalized['brand'] || $normalized['last4']) {
                 $subscription->paymentMethods()->updateOrCreate(
                     [
                         'provider_method_id' => $normalized['provider_charge_id'],
                     ],
                     [
                         'user_id' => $subscription->user_id,
+                        'provider' => 'hitpay',
                         'brand' => $normalized['brand'],
                         'last4' => $normalized['last4'],
                         'country' => $normalized['country'],
@@ -136,7 +148,8 @@ public function startCheckout(User $user, Plan $plan, Site $site): array
 
             $this->stateMachine->activate($subscription, $invoice);
         });
-                $site = $subscription->site;
+
+        $site = $subscription->site;
 
         if (! $site) {
             return;
@@ -151,7 +164,8 @@ public function startCheckout(User $user, Plan $plan, Site $site): array
             UnsuspendSiteJob::dispatch($site->id);
         }
     }
-        public function handleFailedPayment(Subscription $subscription, ?Invoice $invoice, array $payload, ?string $reason = null): void
+
+    public function handleFailedPayment(Subscription $subscription, ?Invoice $invoice, array $payload, ?string $reason = null): void
     {
         DB::transaction(function () use ($subscription, $invoice, $payload, $reason) {
             $subscription->paymentAttempts()->create([

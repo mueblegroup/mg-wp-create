@@ -43,6 +43,7 @@ class Subscription extends Model
     ];
 
     protected $casts = [
+        'amount' => 'decimal:2',
         'starts_at' => 'datetime',
         'next_billing_at' => 'datetime',
         'last_paid_at' => 'datetime',
@@ -76,5 +77,10 @@ class Subscription extends Model
     public function paymentAttempts(): HasMany
     {
         return $this->hasMany(PaymentAttempt::class);
+    }
+
+    public function paymentMethods(): HasMany
+    {
+        return $this->hasMany(PaymentMethod::class);
     }
 }

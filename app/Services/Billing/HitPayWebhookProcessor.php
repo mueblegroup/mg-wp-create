@@ -5,7 +5,6 @@ namespace App\Services\Billing;
 use App\Models\Invoice;
 use App\Models\Subscription;
 use App\Models\WebhookLog;
-use Carbon\Carbon;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -15,7 +14,8 @@ class HitPayWebhookProcessor
     public function __construct(
         protected HitPayClient $client,
         protected BillingService $billingService,
-    ) {}
+    ) {
+    }
 
     public function ingest(string $rawPayload, array $headers): WebhookLog
     {
@@ -57,6 +57,7 @@ class HitPayWebhookProcessor
         }
 
         preg_match('/sub_(\d+)_inv_(\d+)/', $reference, $matches);
+
         $subscriptionId = isset($matches[1]) ? (int) $matches[1] : null;
         $invoiceId = isset($matches[2]) ? (int) $matches[2] : null;
 
@@ -68,22 +69,50 @@ class HitPayWebhookProcessor
         $invoice = $invoiceId ? Invoice::find($invoiceId) : null;
 
         DB::transaction(function () use ($log, $payload, $subscription, $invoice) {
-            if ($log->event_type === 'charge.created' && ($payload['status'] ?? null) === 'succeeded') {
-                $normalized = $this->client->normalizeChargePayload($payload);
-                $this->billingService->handleSuccessfulPayment($subscription, $invoice ?? $this->makeFallbackInvoice($subscription, $payload), $normalized);
-            } elseif ($log->event_type === 'recurring_billing.subscription_updated') {
-                $status = Arr::get($payload, 'status');
+            $status = strtolower((string) Arr::get($payload, 'status'));
+            $eventType = strtolower((string) $log->event_type);
 
-                if (in_array($status, ['cancelled', 'expired'], true)) {
+            if ($eventType === 'charge.created' && $status === 'succeeded') {
+                $normalized = $this->client->normalizeChargePayload($payload);
+
+                $this->billingService->handleSuccessfulPayment(
+                    $subscription,
+                    $invoice ?? $this->makeFallbackInvoice($subscription, $payload),
+                    $normalized
+                );
+            } elseif (
+                in_array($eventType, ['charge.failed', 'charge.updated'], true)
+                && in_array($status, ['failed', 'canceled', 'cancelled'], true)
+            ) {
+                $this->billingService->handleFailedPayment(
+                    $subscription,
+                    $invoice,
+                    $payload,
+                    Arr::get($payload, 'failure_reason') ?? Arr::get($payload, 'status')
+                );
+            } elseif ($eventType === 'recurring_billing.subscription_updated') {
+                $providerStatus = strtolower((string) Arr::get($payload, 'status'));
+
+                if (in_array($providerStatus, ['cancelled', 'expired'], true)) {
                     $subscription->update([
-                        'status' => $status,
-                        $status . '_at' => now(),
-                        'meta' => array_merge($subscription->meta ?? [], ['last_subscription_update' => $payload]),
+                        'status' => $providerStatus,
+                        $providerStatus . '_at' => now(),
+                        'meta' => array_merge($subscription->meta ?? [], [
+                            'last_subscription_update' => $payload,
+                        ]),
+                    ]);
+                } else {
+                    $subscription->update([
+                        'meta' => array_merge($subscription->meta ?? [], [
+                            'last_subscription_update' => $payload,
+                        ]),
                     ]);
                 }
             } else {
                 $subscription->update([
-                    'meta' => array_merge($subscription->meta ?? [], ['last_webhook_payload' => $payload]),
+                    'meta' => array_merge($subscription->meta ?? [], [
+                        'last_webhook_payload' => $payload,
+                    ]),
                 ]);
             }
 

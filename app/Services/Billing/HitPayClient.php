@@ -1,4 +1,9 @@
 <?php
+
+namespace App\Services\Billing;
+
+use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
@@ -17,7 +22,10 @@ class HitPayClient
 
     public function createPlan(array $payload): array
     {
-        $response = $this->http()->post(config('services.hitpay.base_url') . '/subscription-plan', $payload);
+        $response = $this->http()->post(
+            config('services.hitpay.base_url') . '/subscription-plan',
+            $payload
+        );
 
         if ($response->failed()) {
             throw new RuntimeException('HitPay create plan failed: ' . $response->body());
@@ -28,10 +36,27 @@ class HitPayClient
 
     public function createRecurringBilling(array $payload): array
     {
-        $response = $this->http()->post(config('services.hitpay.base_url') . '/recurring-billing', $payload);
+        $response = $this->http()->post(
+            config('services.hitpay.base_url') . '/recurring-billing',
+            $payload
+        );
 
         if ($response->failed()) {
             throw new RuntimeException('HitPay create recurring billing failed: ' . $response->body());
+        }
+
+        return $response->json();
+    }
+
+    public function createPaymentRequest(array $payload): array
+    {
+        $response = $this->http()->post(
+            config('services.hitpay.base_url') . '/payment-requests',
+            $payload
+        );
+
+        if ($response->failed()) {
+            throw new RuntimeException('HitPay payment request failed: ' . $response->body());
         }
 
         return $response->json();
@@ -61,8 +86,7 @@ class HitPayClient
             'brand' => Arr::get($payload, 'payment_provider.charge.details.brand'),
             'last4' => Arr::get($payload, 'payment_provider.charge.details.last4'),
             'country' => Arr::get($payload, 'payment_provider.charge.details.country_code'),
-            'created_at' => Arr::get($payload, 'created_at'),
-            'updated_at' => Arr::get($payload, 'updated_at'),
+            'reference' => Arr::get($payload, 'reference'),
             'raw' => $payload,
         ];
     }

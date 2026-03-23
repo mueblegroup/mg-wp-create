@@ -38,10 +38,11 @@ return [
     ],
 
     'hestia' => [
-    'host' => env('REMOTE_HOST', '148.135.137.250'),
-    'port' => env('REMOTE_PORT', 22),
-    'user' => env('REMOTE_USERNAME', 'root'),
-    'private_key_path' => env('REMOTE_PRIVATE_KEY_PATH', '/root/.ssh/id_ed25519'),
-    'timeout' => env('REMOTE_CONNECT_TIMEOUT', 20),
+        'host' => env('REMOTE_HOST'),
+        'port' => env('REMOTE_PORT', 22),
+        'user' => env('REMOTE_USERNAME'),
+        'password' => env('REMOTE_PASSWORD'),
+        'private_key_path' => env('REMOTE_PRIVATE_KEY_PATH'),
+        'timeout' => env('REMOTE_CONNECT_TIMEOUT', 20),
     ],
 ];

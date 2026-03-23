@@ -36,6 +36,8 @@ class Site extends Model
         'wordpress_admin_email',
 
         'status',
+        'billing_status',
+        'suspension_reason',
         'provisioning_error',
         'provisioned_at',
         'suspended_at',

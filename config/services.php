@@ -24,6 +24,7 @@ return [
     'hitpay' => [
         'api_key' => env('HITPAY_API_KEY'),
         'salt' => env('HITPAY_SALT'),
+        'webhook_salt' => env('HITPAY_WEBHOOK_SALT'),
         'base_url' => rtrim(env('HITPAY_BASE_URL', 'https://api.sandbox.hit-pay.com/v1'), '/'),
         'currency' => env('HITPAY_CURRENCY', 'MYR'),
         'webhook_url' => env('HITPAY_WEBHOOK_URL'),

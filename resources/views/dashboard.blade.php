@@ -6,6 +6,7 @@
                 <div>
                     <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
                     <p class="text-sm text-gray-500 dark:text-gray-400">Overview of your managed WordPress sites.</p>
+
                 </div>
 
                 <a href="{{ route('sites.create') }}"

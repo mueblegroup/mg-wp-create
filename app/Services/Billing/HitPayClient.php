@@ -68,7 +68,12 @@ class HitPayClient
             return false;
         }
 
-        $salt = (string) config('services.hitpay.salt');
+        $salt = (string) config('services.hitpay.webhook_salt');
+
+        if ($salt === '') {
+            return false;
+        }
+
         $computed = hash_hmac('sha256', $rawPayload, $salt);
 
         return hash_equals($computed, $signature);

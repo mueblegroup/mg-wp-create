@@ -12,22 +12,34 @@ use Illuminate\View\View;
 
 class BillingController extends Controller
 {
-    public function __construct(protected BillingService $billingService) {}
+    public function __construct(protected BillingService $billingService)
+    {
+    }
 
     public function index(Request $request): View
     {
-        $subscriptions = $request->user()->subscriptions()->with(['plan', 'site'])->latest()->get();
-        $invoices = $request->user()->invoices()->with('subscription')->latest()->limit(20)->get();
+        $user = $request->user();
 
-        return view('billing.index', compact('subscriptions', 'invoices'));
+        $sites = $user->sites()->latest()->get();
+        $plans = Plan::query()->orderBy('price')->get();
+        $subscriptions = $user->subscriptions()->with(['plan', 'site'])->latest()->get();
+        $invoices = $user->invoices()->with(['subscription.plan', 'subscription.site'])->latest()->limit(20)->get();
+
+        return view('billing.index', compact('sites', 'plans', 'subscriptions', 'invoices'));
     }
 
     public function checkout(StartCheckoutRequest $request): RedirectResponse
     {
-        $site = Site::where('user_id', $request->user()->id)->findOrFail($request->integer('site_id'));
+        $site = Site::where('user_id', $request->user()->id)
+            ->findOrFail($request->integer('site_id'));
+
         $plan = Plan::findOrFail($request->integer('plan_id'));
 
         $result = $this->billingService->startCheckout($request->user(), $plan, $site);
+
+        if (empty($result['checkout_url'])) {
+            return back()->with('error', 'Unable to generate HitPay checkout URL.');
+        }
 
         return redirect()->away($result['checkout_url']);
     }

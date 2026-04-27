@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreSiteRequest;
-use App\Jobs\ProvisionSiteJob;
 use App\Models\Plan;
 use App\Models\Site;
 use App\Models\Subscription;
@@ -72,7 +71,16 @@ class SiteController extends Controller
         $slug = Str::slug($request->string('name')->toString()) . '-' . Str::lower(Str::random(6));
         $hestiaUsername = $this->generateHestiaUsername($user->id, $subdomain);
 
-        $site = DB::transaction(function () use ($user, $plan, $theme, $request, $subdomain, $fqdn, $slug, $hestiaUsername) {
+        $site = DB::transaction(function () use (
+            $user,
+            $plan,
+            $theme,
+            $request,
+            $subdomain,
+            $fqdn,
+            $slug,
+            $hestiaUsername
+        ) {
             $site = Site::create([
                 'user_id' => $user->id,
                 'plan_id' => $plan->id,
@@ -85,6 +93,11 @@ class SiteController extends Controller
                 'hestia_domain' => $fqdn,
                 'wordpress_admin_email' => $user->email,
                 'status' => Site::STATUS_PENDING_PAYMENT,
+                'billing_status' => Subscription::STATUS_PENDING,
+                'provisioning_error' => null,
+                'provisioned_at' => null,
+                'suspended_at' => null,
+                'suspension_reason' => null,
             ]);
 
             $site->domains()->create([
@@ -95,35 +108,38 @@ class SiteController extends Controller
                 'verified_at' => now(),
             ]);
 
-            Subscription::create([
-                'user_id' => $user->id,
-                'site_id' => $site->id,
-                'plan_id' => $plan->id,
-                'provider' => 'hitpay',
-                'amount' => $plan->price,
-                'currency' => $plan->currency,
-                'status' => Subscription::STATUS_PENDING,
-            ]);
+            Subscription::updateOrCreate(
+                ['site_id' => $site->id],
+                [
+                    'user_id' => $user->id,
+                    'plan_id' => $plan->id,
+                    'provider' => 'hitpay',
+                    'amount' => $plan->price,
+                    'currency' => $plan->currency ?? config('services.hitpay.currency', 'MYR'),
+                    'billing_cycle' => $plan->billing_cycle ?? 'monthly',
+                    'status' => Subscription::STATUS_PENDING,
+                    'starts_at' => now(),
+                ]
+            );
 
             $site->provisioningLogs()->create([
                 'action' => 'site_created',
                 'status' => 'info',
-                'message' => 'Site record created and pending payment/provisioning.',
+                'message' => 'Site draft created and awaiting payment before provisioning.',
                 'context' => [
                     'plan' => $plan->name,
                     'theme' => $theme?->slug ?? 'none',
                     'fqdn' => $fqdn,
+                    'billing_status' => Subscription::STATUS_PENDING,
                 ],
             ]);
 
             return $site;
         });
 
-        ProvisionSiteJob::dispatch($site->id);
-
         return redirect()
-            ->route('sites.show', $site)
-            ->with('success', 'Site created successfully. Provisioning job has been queued.');
+            ->route('billing.index', ['site_id' => $site->id])
+            ->with('success', 'Site draft created. Complete payment to start provisioning.');
     }
 
     public function show(Site $site): View
@@ -157,22 +173,28 @@ class SiteController extends Controller
                 ->with('error', 'This site is already provisioning. Please wait for the current job to finish.');
         }
 
+        if (($site->billing_status ?? null) !== Subscription::STATUS_ACTIVE) {
+            return redirect()
+                ->route('billing.index', ['site_id' => $site->id])
+                ->with('error', 'Payment is required before provisioning can be retried.');
+        }
+
         $site->update([
             'status' => Site::STATUS_PENDING_PAYMENT,
             'provisioning_error' => null,
         ]);
 
         $site->provisioningLogs()->create([
-            'action' => 'provisioning_requeued',
+            'action' => 'provisioning_retry_requested',
             'status' => 'info',
-            'message' => 'Provisioning was manually requeued by the site owner.',
+            'message' => 'Provisioning retry requested by the site owner after successful payment.',
             'context' => [
                 'site_id' => $site->id,
                 'fqdn' => $site->fqdn,
             ],
         ]);
 
-        ProvisionSiteJob::dispatch($site->id);
+        \App\Jobs\ProvisionSiteJob::dispatch($site->id);
 
         return redirect()
             ->route('sites.show', $site)

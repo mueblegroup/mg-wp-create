@@ -21,11 +21,18 @@ class BillingController extends Controller
         $user = $request->user();
 
         $sites = $user->sites()->latest()->get();
-        $plans = Plan::query()->orderBy('price')->get();
+        $plans = Plan::query()->where('is_active', true)->orderBy('sort_order')->get();
         $subscriptions = $user->subscriptions()->with(['plan', 'site'])->latest()->get();
         $invoices = $user->invoices()->with(['subscription.plan', 'subscription.site'])->latest()->limit(20)->get();
+        $selectedSiteId = $request->integer('site_id');
 
-        return view('billing.index', compact('sites', 'plans', 'subscriptions', 'invoices'));
+        return view('billing.index', compact(
+            'sites',
+            'plans',
+            'subscriptions',
+            'invoices',
+            'selectedSiteId'
+        ));
     }
 
     public function checkout(StartCheckoutRequest $request): RedirectResponse

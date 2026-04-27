@@ -83,6 +83,7 @@ class BillingService
                 'redirect_url' => config('services.hitpay.success_url'),
                 'reference' => $reference,
                 'send_email' => 'true',
+                'webhook' => config('services.hitpay.webhook_url'),
             ]);
 
             $subscription->update([

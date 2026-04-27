@@ -10,8 +10,17 @@ use Throwable;
 
 class HitPayWebhookController extends Controller
 {
+    
     public function __invoke(Request $request, HitPayWebhookProcessor $processor): JsonResponse
     {
+        \Log::info('HitPay webhook reached', [
+            'content_type' => $request->header('Content-Type'),
+            'hitpay_signature' => $request->header('Hitpay-Signature'),
+            'hitpay_event_type' => $request->header('Hitpay-Event-Type'),
+            'hitpay_event_object' => $request->header('Hitpay-Event-Object'),
+            'payload' => $request->getContent(),
+        ]);
+        
         $rawPayload = $request->getContent();
         $headers = $request->headers->all();
 

@@ -19,12 +19,33 @@ class HitPayWebhookProcessor
 
     public function ingest(string $rawPayload, array $headers): WebhookLog
     {
-        $signature = $headers['hitpay-signature'][0] ?? $headers['Hitpay-Signature'][0] ?? null;
+        $contentType = strtolower((string) ($headers['content-type'][0] ?? ''));
+        $headerSignature = $headers['hitpay-signature'][0] ?? $headers['Hitpay-Signature'][0] ?? null;
         $eventType = $headers['hitpay-event-type'][0] ?? $headers['Hitpay-Event-Type'][0] ?? null;
         $eventObject = $headers['hitpay-event-object'][0] ?? $headers['Hitpay-Event-Object'][0] ?? null;
+
         $payloadHash = hash('sha256', $rawPayload);
 
-        return WebhookLog::firstOrCreate(
+        $parsedPayload = [];
+        $signature = $headerSignature;
+        $isValid = false;
+        $payloadFormat = 'unknown';
+
+        if (str_contains($contentType, 'application/json')) {
+            $parsedPayload = json_decode($rawPayload, true) ?? [];
+            $isValid = $this->client->validateJsonWebhook($rawPayload, $headerSignature);
+            $payloadFormat = 'json';
+        } elseif (str_contains($contentType, 'application/x-www-form-urlencoded')) {
+            parse_str($rawPayload, $parsedPayload);
+            $signature = $parsedPayload['hmac'] ?? null;
+            $isValid = $this->client->validateFormWebhook($rawPayload, $signature);
+            $payloadFormat = 'form';
+
+            $eventType = $eventType ?: 'charge.created';
+            $eventObject = $eventObject ?: 'recurring_billing';
+        }
+
+        return WebhookLog::updateOrCreate(
             ['payload_hash' => $payloadHash],
             [
                 'provider' => 'hitpay',
@@ -32,8 +53,11 @@ class HitPayWebhookProcessor
                 'event_object' => $eventObject,
                 'signature' => $signature,
                 'raw_payload' => $rawPayload,
-                'headers' => $headers,
-                'is_valid' => $this->client->validateWebhook($rawPayload, $signature),
+                'headers' => array_merge($headers, [
+                    '_parsed' => $parsedPayload,
+                    '_format' => $payloadFormat,
+                ]),
+                'is_valid' => $isValid,
             ]
         );
     }
@@ -45,14 +69,17 @@ class HitPayWebhookProcessor
         }
 
         if (! $log->is_valid) {
-            throw new RuntimeException('Invalid HitPay webhook signature.');
+            throw new RuntimeException('Invalid HMAC');
         }
 
-        $payload = json_decode($log->raw_payload, true, 512, JSON_THROW_ON_ERROR);
-        $reference = Arr::get($payload, 'reference');
+        $payload = $this->extractPayload($log);
+
+        $reference = Arr::get($payload, 'reference')
+            ?? Arr::get($payload, 'reference_number')
+            ?? Arr::get($payload, 'relatable.business_charge.reference');
 
         if (! $reference) {
-            $log->update(['processing_error' => 'Missing subscription reference in payload.']);
+            $log->update(['processing_error' => 'Missing reference in payload.']);
             return;
         }
 
@@ -70,9 +97,12 @@ class HitPayWebhookProcessor
 
         DB::transaction(function () use ($log, $payload, $subscription, $invoice) {
             $status = strtolower((string) Arr::get($payload, 'status'));
-            $eventType = strtolower((string) $log->event_type);
+            $eventType = strtolower((string) ($log->event_type ?? ''));
 
-            if ($eventType === 'charge.created' && $status === 'succeeded') {
+            if (
+                in_array($eventType, ['completed', 'charge.created', 'payment_request.completed'], true)
+                && in_array($status, ['succeeded', 'completed'], true)
+            ) {
                 $normalized = $this->client->normalizeChargePayload($payload);
 
                 $this->billingService->handleSuccessfulPayment(
@@ -81,14 +111,14 @@ class HitPayWebhookProcessor
                     $normalized
                 );
             } elseif (
-                in_array($eventType, ['charge.failed', 'charge.updated'], true)
+                in_array($eventType, ['charge.failed', 'failed'], true)
                 && in_array($status, ['failed', 'canceled', 'cancelled'], true)
             ) {
                 $this->billingService->handleFailedPayment(
                     $subscription,
                     $invoice,
                     $payload,
-                    Arr::get($payload, 'failure_reason') ?? Arr::get($payload, 'status')
+                    Arr::get($payload, 'failed_reason') ?? Arr::get($payload, 'status')
                 );
             } elseif ($eventType === 'recurring_billing.subscription_updated') {
                 $providerStatus = strtolower((string) Arr::get($payload, 'status'));
@@ -101,19 +131,7 @@ class HitPayWebhookProcessor
                             'last_subscription_update' => $payload,
                         ]),
                     ]);
-                } else {
-                    $subscription->update([
-                        'meta' => array_merge($subscription->meta ?? [], [
-                            'last_subscription_update' => $payload,
-                        ]),
-                    ]);
                 }
-            } else {
-                $subscription->update([
-                    'meta' => array_merge($subscription->meta ?? [], [
-                        'last_webhook_payload' => $payload,
-                    ]),
-                ]);
             }
 
             $log->update([
@@ -124,6 +142,18 @@ class HitPayWebhookProcessor
         });
     }
 
+    protected function extractPayload(WebhookLog $log): array
+    {
+        $headers = is_array($log->headers) ? $log->headers : [];
+        $parsed = $headers['_parsed'] ?? null;
+
+        if (is_array($parsed)) {
+            return $parsed;
+        }
+
+        return json_decode($log->raw_payload, true, 512, JSON_THROW_ON_ERROR);
+    }
+
     protected function makeFallbackInvoice(Subscription $subscription, array $payload): Invoice
     {
         return Invoice::create([
@@ -132,8 +162,8 @@ class HitPayWebhookProcessor
             'site_id' => $subscription->site_id,
             'invoice_number' => 'INV-FB-' . now()->format('YmdHis') . '-' . $subscription->id,
             'status' => Invoice::STATUS_PENDING,
-            'currency' => strtoupper((string) ($payload['currency'] ?? config('services.hitpay.currency', 'MYR'))),
-            'amount' => $payload['amount'] ?? $subscription->amount,
+            'currency' => strtoupper((string) (Arr::get($payload, 'currency') ?? config('services.hitpay.currency', 'MYR'))),
+            'amount' => Arr::get($payload, 'amount') ?? $subscription->amount,
             'due_at' => now(),
         ]);
     }

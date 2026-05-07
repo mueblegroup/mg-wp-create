@@ -35,7 +35,6 @@ class SubscriptionStateMachine
         if ($subscription->site) {
             $subscription->site->update([
                 'billing_status' => Subscription::STATUS_ACTIVE,
-                'status' => Site::STATUS_ACTIVE,
                 'suspension_reason' => null,
                 'suspended_at' => null,
             ]);

@@ -77,7 +77,7 @@ class BillingService
                 'plan_id' => $subscription->provider_plan_id,
                 'customer_email' => $user->email,
                 'customer_name' => $user->name,
-                'start_date' => now()->format('Y-m-d'),
+                'start_date' => $this->hitpayStartDate(),
                 'amount' => $plan->price,
                 'currency' => config('services.hitpay.currency', 'MYR'),
                 'redirect_url' => config('services.hitpay.success_url'),
@@ -107,27 +107,39 @@ class BillingService
             ];
         });
     }
+    protected function hitpayStartDate(): string
+    {
+        return now('Asia/Kuala_Lumpur')->format('Y-m-d');
+    }
 
     public function handleSuccessfulPayment(Subscription $subscription, Invoice $invoice, array $normalized): void
     {
         DB::transaction(function () use ($subscription, $invoice, $normalized) {
             $invoice->update([
                 'provider_charge_id' => $normalized['provider_charge_id'],
+                'status' => Invoice::STATUS_PAID,
+                'paid_at' => now(),
+                'failed_at' => null,
+                'failure_reason' => null,
                 'meta' => $normalized['raw'],
             ]);
 
-            $subscription->paymentAttempts()->create([
-                'invoice_id' => $invoice->id,
-                'provider_event_type' => 'charge.created',
-                'provider_charge_id' => $normalized['provider_charge_id'],
-                'provider_reference' => $subscription->provider_customer_reference,
-                'status' => 'succeeded',
-                'amount' => $normalized['amount'],
-                'currency' => $normalized['currency'],
-                'attempted_at' => now(),
-                'succeeded_at' => now(),
-                'payload' => $normalized['raw'],
-            ]);
+            $subscription->paymentAttempts()->updateOrCreate(
+                [
+                    'provider_charge_id' => $normalized['provider_charge_id'],
+                ],
+                [
+                    'invoice_id' => $invoice->id,
+                    'provider_event_type' => 'charge.created',
+                    'provider_reference' => $subscription->provider_customer_reference,
+                    'status' => 'succeeded',
+                    'amount' => $normalized['amount'],
+                    'currency' => $normalized['currency'],
+                    'attempted_at' => now(),
+                    'succeeded_at' => now(),
+                    'payload' => $normalized['raw'],
+                ]
+            );
 
             if ($normalized['brand'] || $normalized['last4']) {
                 $subscription->paymentMethods()->updateOrCreate(
@@ -150,20 +162,46 @@ class BillingService
             $this->stateMachine->activate($subscription, $invoice);
         });
 
-        $site = $subscription->site;
+        $subscription->refresh();
+        $site = $subscription->site()->first();
 
         if (! $site) {
             return;
         }
 
-        if (! $site->provisioned_at && $site->status !== Site::STATUS_ACTIVE) {
+        if (! $site->provisioned_at) {
+            $site->update([
+                'status' => Site::STATUS_PROVISIONING,
+                'provisioning_error' => null,
+            ]);
+
+            $site->provisioningLogs()->create([
+                'action' => 'provisioning_queued_after_payment',
+                'status' => 'info',
+                'message' => 'Payment completed successfully. WordPress provisioning has been queued.',
+                'context' => [
+                    'subscription_id' => $subscription->id,
+                    'invoice_id' => $invoice->id,
+                    'provider_charge_id' => $normalized['provider_charge_id'],
+                ],
+            ]);
+
             ProvisionSiteJob::dispatch($site->id);
+
             return;
         }
 
         if ($site->status === Site::STATUS_SUSPENDED) {
             UnsuspendSiteJob::dispatch($site->id);
+            return;
         }
+
+        $site->update([
+            'status' => Site::STATUS_ACTIVE,
+            'billing_status' => Subscription::STATUS_ACTIVE,
+            'suspension_reason' => null,
+            'suspended_at' => null,
+        ]);
     }
 
     public function handleFailedPayment(Subscription $subscription, ?Invoice $invoice, array $payload, ?string $reason = null): void

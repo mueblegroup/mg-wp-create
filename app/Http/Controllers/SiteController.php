@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreSiteRequest;
+use App\Jobs\ProvisionSiteJob;
 use App\Models\Plan;
 use App\Models\Site;
 use App\Models\Subscription;
@@ -35,11 +36,13 @@ class SiteController extends Controller
             ->get();
 
         $themes = Theme::query()
-            ->active()
+            ->where('is_active', true)
             ->orderBy('min_plan_level')
             ->orderBy('name')
             ->get()
-            ->filter(fn (Theme $theme) => $theme->zip_exists)
+            ->filter(function (Theme $theme) {
+                return $theme->zip_exists;
+            })
             ->values();
 
         return view('sites.create', [
@@ -52,22 +55,40 @@ class SiteController extends Controller
     public function store(StoreSiteRequest $request): RedirectResponse
     {
         $user = $request->user();
-        $plan = Plan::findOrFail($request->integer('plan_id'));
-        $theme = $request->filled('theme_id')
-            ? Theme::findOrFail($request->integer('theme_id'))
-            : null;
 
-        if ($theme && ! $theme->zip_exists) {
-            return redirect()
-                ->back()
-                ->withInput()
-                ->withErrors([
-                    'theme_id' => 'The selected theme package file does not exist on the server.',
-                ]);
+        $plan = Plan::query()
+            ->where('is_active', true)
+            ->findOrFail($request->integer('plan_id'));
+
+        $theme = null;
+
+        if ($request->filled('theme_id')) {
+            $theme = Theme::query()
+                ->where('is_active', true)
+                ->findOrFail($request->integer('theme_id'));
+
+            if (! $theme->zip_exists) {
+                return redirect()
+                    ->back()
+                    ->withInput()
+                    ->withErrors([
+                        'theme_id' => 'The selected theme package file does not exist on the server.',
+                    ]);
+            }
+
+            if (! $this->planCanUseTheme($plan, $theme)) {
+                return redirect()
+                    ->back()
+                    ->withInput()
+                    ->withErrors([
+                        'theme_id' => 'This theme is not available for the selected package.',
+                    ]);
+            }
         }
 
         $subdomain = Str::lower($request->string('subdomain')->toString());
         $fqdn = $subdomain . '.' . config('saas.base_domain');
+
         $slug = Str::slug($request->string('name')->toString()) . '-' . Str::lower(Str::random(6));
         $hestiaUsername = $this->generateHestiaUsername($user->id, $subdomain);
 
@@ -127,8 +148,13 @@ class SiteController extends Controller
                 'status' => 'info',
                 'message' => 'Site draft created and awaiting payment before provisioning.',
                 'context' => [
+                    'plan_id' => $plan->id,
                     'plan' => $plan->name,
+                    'plan_label' => $plan->label,
+                    'plan_level' => (int) $plan->sort_order,
+                    'theme_id' => $theme?->id,
                     'theme' => $theme?->slug ?? 'none',
+                    'theme_min_plan_level' => $theme?->min_plan_level,
                     'fqdn' => $fqdn,
                     'billing_status' => Subscription::STATUS_PENDING,
                 ],
@@ -179,6 +205,34 @@ class SiteController extends Controller
                 ->with('error', 'Payment is required before provisioning can be retried.');
         }
 
+        $site->load(['plan', 'theme']);
+
+        if (! $site->plan || ! $site->plan->is_active) {
+            return redirect()
+                ->route('sites.show', $site)
+                ->with('error', 'The selected package is no longer available.');
+        }
+
+        if ($site->theme) {
+            if (! $site->theme->is_active) {
+                return redirect()
+                    ->route('sites.show', $site)
+                    ->with('error', 'The selected theme is no longer active.');
+            }
+
+            if (! $site->theme->zip_exists) {
+                return redirect()
+                    ->route('sites.show', $site)
+                    ->with('error', 'The selected theme package file does not exist on the server.');
+            }
+
+            if (! $this->planCanUseTheme($site->plan, $site->theme)) {
+                return redirect()
+                    ->route('sites.show', $site)
+                    ->with('error', 'The selected theme is not available for this package.');
+            }
+        }
+
         $site->update([
             'status' => Site::STATUS_PENDING_PAYMENT,
             'provisioning_error' => null,
@@ -191,10 +245,14 @@ class SiteController extends Controller
             'context' => [
                 'site_id' => $site->id,
                 'fqdn' => $site->fqdn,
+                'plan_id' => $site->plan_id,
+                'plan_level' => (int) $site->plan->sort_order,
+                'theme_id' => $site->theme_id,
+                'theme_min_plan_level' => $site->theme?->min_plan_level,
             ],
         ]);
 
-        \App\Jobs\ProvisionSiteJob::dispatch($site->id);
+        ProvisionSiteJob::dispatch($site->id);
 
         return redirect()
             ->route('sites.show', $site)
@@ -216,6 +274,11 @@ class SiteController extends Controller
                 ->route('sites.show', $site)
                 ->with('error', 'Failed to delete site: ' . $e->getMessage());
         }
+    }
+
+    protected function planCanUseTheme(Plan $plan, Theme $theme): bool
+    {
+        return (int) $theme->min_plan_level <= (int) $plan->sort_order;
     }
 
     protected function generateHestiaUsername(int $userId, string $subdomain): string

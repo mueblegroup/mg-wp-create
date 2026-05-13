@@ -15,14 +15,14 @@ class WordPressProvisionService
     /**
      * Install WordPress for a provisioned Hestia site.
      *
-     * Important:
+     * IMPORTANT:
      * - $databaseName must be the FULL Hestia database name.
      *   Example: u13abc_wpdb
      *
      * - $databaseUser must be the FULL Hestia database username.
      *   Example: u13abc_wpuser
      *
-     * - $databasePassword must be the actual database password used when creating the DB.
+     * - $databasePassword must be the actual database password currently set in Hestia/MySQL.
      */
     public function install(
         Site $site,
@@ -30,13 +30,13 @@ class WordPressProvisionService
         string $databaseUser,
         string $databasePassword
     ): array {
+        $this->assertRequiredSiteFields($site);
+        $this->assertDatabaseCredentials($databaseName, $databaseUser, $databasePassword);
+
         $sitePath = $this->sitePath($site);
         $wpBinary = $this->wpBinary();
 
         $results = [];
-
-        $this->assertRequiredSiteFields($site);
-        $this->assertDatabaseCredentials($databaseName, $databaseUser, $databasePassword);
 
         $results[] = $this->run(
             'mkdir -p ' . escapeshellarg($sitePath),
@@ -47,6 +47,18 @@ class WordPressProvisionService
             'cd ' . escapeshellarg($sitePath) . ' && pwd',
             'Failed to access remote site directory.'
         );
+
+        /*
+        |--------------------------------------------------------------------------
+        | Remove Hestia default placeholder files
+        |--------------------------------------------------------------------------
+        |
+        | Hestia creates index.html / index.htm by default. If these remain inside
+        | public_html, the frontend may show "Site under construction" even though
+        | WordPress is installed correctly because the web server may serve index.html
+        | before index.php.
+        */
+        $results[] = $this->removeHestiaDefaultIndexFiles($sitePath);
 
         /*
         |--------------------------------------------------------------------------
@@ -71,11 +83,12 @@ class WordPressProvisionService
 
         /*
         |--------------------------------------------------------------------------
-        | Check whether WordPress is already installed
+        | Check installation status
         |--------------------------------------------------------------------------
-        | If WordPress is not installed, we force-recreate wp-config.php.
-        | This avoids stale DB credentials causing:
-        | "Error establishing a database connection"
+        |
+        | WP-CLI core is-installed may fail with DB errors if a stale wp-config.php
+        | exists. So we do not trust it blindly. If the check fails, we recreate
+        | wp-config.php using the latest DB credentials and then HARD verify DB.
         */
         $isInstalled = $this->run(
             'cd ' . escapeshellarg($sitePath)
@@ -92,7 +105,10 @@ class WordPressProvisionService
                 $databasePassword
             );
 
-            $results[] = $this->verifyDatabaseConnection($sitePath);
+            // IMPORTANT: this must throw on failure. Previously the code returned
+            // a failed step but still continued to wp core install, causing the
+            // repeated "Error establishing a database connection" failure.
+            $results[] = $this->verifyDatabaseConnectionOrFail($sitePath, $databaseName, $databaseUser);
 
             $results[] = $this->run(
                 'cd ' . escapeshellarg($sitePath)
@@ -115,11 +131,18 @@ class WordPressProvisionService
         |--------------------------------------------------------------------------
         | Always sync admin credentials
         |--------------------------------------------------------------------------
-        | This is critical. On retry, WordPress may already be installed and the
-        | user may already exist. We still force update password/email/role so
-        | Laravel dashboard credentials match the real WordPress login.
         */
         $results[] = $this->syncAdminUser($site);
+
+        /*
+        |--------------------------------------------------------------------------
+        | Install Laravel -> WordPress SSO
+        |--------------------------------------------------------------------------
+        |
+        | This creates/updates the MU plugin and writes MG_SSO_SECRET into
+        | wp-config.php so the Laravel dashboard can open wp-admin directly.
+        */
+        $results[] = $this->installSsoPlugin($site);
 
         /*
         |--------------------------------------------------------------------------
@@ -159,12 +182,35 @@ class WordPressProvisionService
 
     /**
      * Create or update the WordPress admin user.
-     *
-     * This method always makes sure the dashboard password and WordPress password match.
      */
     public function createAdmin(Site $site): array
     {
         return $this->syncAdminUser($site);
+    }
+
+    protected function removeHestiaDefaultIndexFiles(string $sitePath): array
+    {
+        $result = $this->run(
+            'rm -f '
+            . escapeshellarg($sitePath . '/index.html') . ' '
+            . escapeshellarg($sitePath . '/index.htm') . ' '
+            . escapeshellarg($sitePath . '/default.html') . ' '
+            . escapeshellarg($sitePath . '/default.htm'),
+            'Failed to remove Hestia default placeholder files.',
+            false
+        );
+
+        return $this->step(
+            'hestia_default_index_removed',
+            $this->ok($result),
+            $this->ok($result)
+                ? 'Hestia default placeholder files removed.'
+                : 'Could not remove Hestia default placeholder files.',
+            [
+                'site_path' => $sitePath,
+                'result' => $result,
+            ]
+        );
     }
 
     protected function syncAdminUser(Site $site): array
@@ -252,17 +298,171 @@ class WordPressProvisionService
     }
 
     /**
+     * Install/update the SSO MU plugin and set MG_SSO_SECRET in wp-config.php.
+     *
+     * This allows Laravel to generate a signed temporary URL that logs the
+     * customer directly into this WordPress site's /wp-admin/ without exposing
+     * or copying the admin password.
+     */
+    protected function installSsoPlugin(Site $site): array
+    {
+        $this->assertRequiredSiteFields($site);
+
+        $sitePath = $this->sitePath($site);
+        $wpBinary = $this->wpBinary();
+
+        $isInstalled = $this->run(
+            'cd ' . escapeshellarg($sitePath)
+            . ' && ' . $wpBinary . ' core is-installed --allow-root',
+            null,
+            false
+        );
+
+        if (! $this->ok($isInstalled)) {
+            return $this->step(
+                'sso_install_skipped',
+                false,
+                'WordPress is not installed yet, so SSO plugin installation was skipped.',
+                ['check' => $isInstalled]
+            );
+        }
+
+        $ssoSecret = (string) ($site->wordpress_sso_secret ?? '');
+
+        if ($ssoSecret === '') {
+            $ssoSecret = bin2hex(random_bytes(32));
+
+            $site->forceFill([
+                'wordpress_sso_secret' => $ssoSecret,
+            ])->save();
+        }
+
+        $pluginCode = <<<'PHP'
+<?php
+/**
+ * Plugin Name: Mueble Group SSO Login
+ * Description: Secure one-click WordPress admin login from Laravel SaaS dashboard.
+ */
+
+if (! defined('ABSPATH')) {
+    exit;
+}
+
+add_action('admin_post_nopriv_mg_sso_login', 'mg_sso_login_handler');
+add_action('admin_post_mg_sso_login', 'mg_sso_login_handler');
+
+function mg_sso_login_handler(): void
+{
+    $secret = defined('MG_SSO_SECRET') ? MG_SSO_SECRET : '';
+
+    if ($secret === '') {
+        wp_die('SSO is not configured.', 403);
+    }
+
+    $site_id = sanitize_text_field($_GET['site_id'] ?? '');
+    $username = sanitize_user($_GET['username'] ?? '');
+    $email = sanitize_email($_GET['email'] ?? '');
+    $expires = (int) ($_GET['expires'] ?? 0);
+    $nonce = sanitize_text_field($_GET['nonce'] ?? '');
+    $signature = sanitize_text_field($_GET['signature'] ?? '');
+
+    if (! $site_id || ! $username || ! $email || ! $expires || ! $nonce || ! $signature) {
+        wp_die('Invalid SSO request.', 403);
+    }
+
+    if (time() > $expires) {
+        wp_die('SSO link expired.', 403);
+    }
+
+    $payload = implode('|', [
+        $site_id,
+        $username,
+        $email,
+        $expires,
+        $nonce,
+    ]);
+
+    $expected = hash_hmac('sha256', $payload, $secret);
+
+    if (! hash_equals($expected, $signature)) {
+        wp_die('Invalid SSO signature.', 403);
+    }
+
+    $user = get_user_by('login', $username);
+
+    if (! $user) {
+        $user = get_user_by('email', $email);
+    }
+
+    if (! $user) {
+        wp_die('WordPress user not found.', 403);
+    }
+
+    if (! user_can($user, 'administrator')) {
+        wp_die('User is not an administrator.', 403);
+    }
+
+    wp_clear_auth_cookie();
+    wp_set_current_user($user->ID);
+    wp_set_auth_cookie($user->ID, true, is_ssl());
+
+    wp_safe_redirect(admin_url());
+    exit;
+}
+PHP;
+
+        $encodedPlugin = base64_encode($pluginCode);
+
+        $steps = [];
+
+        $steps[] = $this->run(
+            'mkdir -p ' . escapeshellarg($sitePath . '/wp-content/mu-plugins'),
+            'Failed to create WordPress MU plugins directory.'
+        );
+
+        $steps[] = $this->run(
+            'printf %s ' . escapeshellarg($encodedPlugin)
+            . ' | base64 -d > ' . escapeshellarg($sitePath . '/wp-content/mu-plugins/mg-sso-login.php'),
+            'Failed to write WordPress SSO MU plugin.'
+        );
+
+        $steps[] = $this->run(
+            'cd ' . escapeshellarg($sitePath)
+            . ' && ' . $wpBinary . ' config set MG_SSO_SECRET '
+            . escapeshellarg($ssoSecret)
+            . ' --type=constant --allow-root',
+            'Failed to write MG_SSO_SECRET to wp-config.php.'
+        );
+
+        return $this->step(
+            'sso_plugin_installed',
+            true,
+            'WordPress SSO plugin installed and configured successfully.',
+            [
+                'site_path' => $sitePath,
+                'plugin_path' => $sitePath . '/wp-content/mu-plugins/mg-sso-login.php',
+                'steps' => $steps,
+            ]
+        );
+    }
+
+    /**
      * Create the WordPress database through Hestia CLI.
      *
-     * Hestia automatically prefixes database name and user with the Hestia username.
-     * So if:
+     * Hestia prefixes database name and user with the Hestia username.
+     * Example:
      * - hestia username = u13abc
      * - database suffix = wpdb
      * - db user suffix = wpuser
      *
-     * The real DB credentials become:
-     * - database name = u13abc_wpdb
-     * - database user = u13abc_wpuser
+     * Real credentials:
+     * - DB name = u13abc_wpdb
+     * - DB user = u13abc_wpuser
+     *
+     * Critical retry fix:
+     * If the database already exists from a failed provisioning attempt, we reset
+     * the database user's password to the current generated password. Otherwise
+     * wp-config.php would use a fresh password while MySQL still has the old one.
      */
     public function createDatabase(
         string $hestiaUsername,
@@ -271,8 +471,11 @@ class WordPressProvisionService
         string $databasePassword
     ): array {
         $this->assertDatabaseCredentials($databaseName, $databaseUser, $databasePassword);
+        $this->assertHestiaIdentifier($hestiaUsername, 'hestiaUsername');
+        $this->assertHestiaIdentifier($databaseName, 'databaseName');
+        $this->assertHestiaIdentifier($databaseUser, 'databaseUser');
 
-        $command = '/usr/local/hestia/bin/v-add-database '
+        $addCommand = '/usr/local/hestia/bin/v-add-database '
             . escapeshellarg($hestiaUsername) . ' '
             . escapeshellarg($databaseName) . ' '
             . escapeshellarg($databaseUser) . ' '
@@ -281,16 +484,32 @@ class WordPressProvisionService
             . escapeshellarg('localhost') . ' '
             . escapeshellarg('utf8mb4');
 
-        $result = $this->run(
-            $command,
+        $addResult = $this->run(
+            $addCommand,
             'Failed to create database remotely through Hestia CLI.',
             false
         );
 
-        $output = strtolower((string) (($result['stderr'] ?? '') . ' ' . ($result['stdout'] ?? '') . ' ' . ($result['message'] ?? '')));
+        $output = strtolower((string) (($addResult['stderr'] ?? '') . ' ' . ($addResult['stdout'] ?? '') . ' ' . ($addResult['message'] ?? '')));
+        $alreadyExists = str_contains($output, 'already exists') || str_contains($output, 'exists');
 
-        if (! $this->ok($result) && ! str_contains($output, 'already exists') && ! str_contains($output, 'exists')) {
-            throw new RuntimeException('Failed to create database remotely through Hestia CLI.');
+        $passwordResetResult = null;
+
+        if (! $this->ok($addResult)) {
+            if (! $alreadyExists) {
+                throw new RuntimeException(
+                    'Failed to create database remotely through Hestia CLI. Output: ' . trim($output)
+                );
+            }
+
+            // Retry/idempotency fix: if DB exists, make its password match the
+            // password Laravel will write into wp-config.php.
+            $passwordResetResult = $this->resetExistingDatabasePassword(
+                $hestiaUsername,
+                $databaseName,
+                $databaseUser,
+                $databasePassword
+            );
         }
 
         $fullDatabaseName = $hestiaUsername . '_' . $databaseName;
@@ -298,17 +517,47 @@ class WordPressProvisionService
 
         return [
             'success' => true,
-            'message' => $this->ok($result)
+            'message' => $this->ok($addResult)
                 ? 'Database created successfully.'
-                : 'Database already exists, continuing with generated credentials.',
+                : 'Database already existed. Database user password was reset to current credentials.',
             'hestia_username' => $hestiaUsername,
             'database_name_suffix' => $databaseName,
             'database_user_suffix' => $databaseUser,
             'full_database_name' => $fullDatabaseName,
             'full_database_user' => $fullDatabaseUser,
             'database_password' => $databasePassword,
-            'result' => $result,
+            'result' => $addResult,
+            'password_reset_result' => $passwordResetResult,
         ];
+    }
+
+    protected function resetExistingDatabasePassword(
+        string $hestiaUsername,
+        string $databaseName,
+        string $databaseUser,
+        string $databasePassword
+    ): array {
+        $command = '/usr/local/hestia/bin/v-change-database-password '
+            . escapeshellarg($hestiaUsername) . ' '
+            . escapeshellarg($databaseName) . ' '
+            . escapeshellarg($databaseUser) . ' '
+            . escapeshellarg($databasePassword);
+
+        $result = $this->run(
+            $command,
+            'Database exists, but failed to reset database user password through Hestia CLI.',
+            false
+        );
+
+        if (! $this->ok($result)) {
+            $output = trim((string) (($result['stderr'] ?? '') . ' ' . ($result['stdout'] ?? '') . ' ' . ($result['message'] ?? '')));
+
+            throw new RuntimeException(
+                'Database already exists, but password reset failed. Delete the failed Hestia database/site and retry. Output: ' . $output
+            );
+        }
+
+        return $result;
     }
 
     /**
@@ -375,8 +624,6 @@ class WordPressProvisionService
 
     /**
      * Force recreate wp-config.php with current DB credentials.
-     *
-     * This fixes stale wp-config.php from failed/retried provisioning attempts.
      */
     protected function recreateWpConfig(
         string $sitePath,
@@ -421,8 +668,9 @@ class WordPressProvisionService
 
     /**
      * Verify WordPress can connect to the database before running core install.
+     * This throws on failure so provisioning stops with the real root cause.
      */
-    protected function verifyDatabaseConnection(string $sitePath): array
+    protected function verifyDatabaseConnectionOrFail(string $sitePath, string $databaseName, string $databaseUser): array
     {
         $wpBinary = $this->wpBinary();
 
@@ -434,13 +682,14 @@ class WordPressProvisionService
         );
 
         if (! $this->ok($check)) {
-            return $this->step(
-                'database_connection_failed',
-                false,
-                'WordPress could not connect to the database using wp-config.php.',
-                [
-                    'check' => $check,
-                ]
+            $output = trim((string) (($check['stderr'] ?? '') . ' ' . ($check['stdout'] ?? '') . ' ' . ($check['message'] ?? '')));
+
+            throw new RuntimeException(
+                'WordPress database connection failed before install. '
+                . 'DB_NAME=' . $databaseName . ', DB_USER=' . $databaseUser . '. '
+                . 'This usually means Hestia database credentials do not match wp-config.php, '
+                . 'or the database exists from an old failed attempt with a different password. '
+                . 'Output: ' . $output
             );
         }
 
@@ -535,6 +784,13 @@ class WordPressProvisionService
         }
     }
 
+    protected function assertHestiaIdentifier(string $value, string $field): void
+    {
+        if (! preg_match('/^[a-zA-Z0-9_]+$/', $value)) {
+            throw new RuntimeException("Invalid {$field}. Only letters, numbers, and underscores are allowed for Hestia identifiers.");
+        }
+    }
+
     protected function run(string $command, ?string $errorMessage = null, bool $throw = true): array
     {
         $result = $this->remoteCommandService->run($command, $errorMessage, $throw);
@@ -564,4 +820,6 @@ class WordPressProvisionService
             'context' => $context,
         ];
     }
+
+    
 }

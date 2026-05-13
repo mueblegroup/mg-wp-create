@@ -41,6 +41,7 @@ class Site extends Model
         'provisioning_error',
         'provisioned_at',
         'suspended_at',
+        'wordpress_sso_secret',
     ];
 
     protected array $temporaryProvisioningData = [];

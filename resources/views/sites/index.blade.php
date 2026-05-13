@@ -69,12 +69,20 @@
                                         </span>
                                     </td>
                                     <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
-                                        @if ($site->wordpress_admin_url)
-                                            <a href="{{ $site->wordpress_admin_url }}" target="_blank" class="text-blue-600 hover:underline dark:text-blue-400">
+                                        @if ($site->status === \App\Models\Site::STATUS_ACTIVE && $site->wordpress_sso_secret)
+                                            <a href="{{ route('sites.wp-admin-login', $site) }}"
+                                            target="_blank"
+                                            class="inline-flex items-center rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
                                                 Open Admin
                                             </a>
+                                        @elseif ($site->wordpress_admin_url)
+                                            <a href="{{ $site->wordpress_admin_url }}"
+                                            target="_blank"
+                                            class="inline-flex items-center rounded-lg border px-4 py-2 text-sm font-medium">
+                                                Manual Login
+                                            </a>
                                         @else
-                                            Pending
+                                            <span class="text-sm text-gray-500">Pending</span>
                                         @endif
                                     </td>
                                     <td class="px-6 py-4">

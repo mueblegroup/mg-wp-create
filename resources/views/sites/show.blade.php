@@ -142,16 +142,33 @@
                             </div>
 
                             <div class="sm:col-span-2">
-                                <div class="text-xs uppercase tracking-wider text-gray-500">WordPress Admin URL</div>
-                                <div class="mt-1 text-sm font-medium text-gray-900 dark:text-white break-all">
+                                <div class="text-xs uppercase tracking-wider text-gray-500">WordPress Admin Access</div>
+
+                                <div class="mt-2 flex flex-wrap items-center gap-3">
                                     @if ($site->wordpress_admin_url)
-                                        <a href="{{ $site->wordpress_admin_url }}" target="_blank" class="text-blue-600 hover:underline dark:text-blue-400">
-                                            {{ $site->wordpress_admin_url }}
+                                        @if ($site->status === \App\Models\Site::STATUS_ACTIVE && $site->wordpress_sso_secret)
+                                            <a href="{{ route('sites.wp-admin-login', $site) }}"
+                                            target="_blank"
+                                            class="inline-flex items-center rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+                                                SSO Login
+                                            </a>
+                                        @endif
+
+                                        <a href="{{ $site->wordpress_admin_url }}"
+                                        target="_blank"
+                                        class="inline-flex items-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                                            Manual Login
                                         </a>
                                     @else
-                                        Pending
+                                        <span class="text-sm text-gray-500 dark:text-gray-400">Pending</span>
                                     @endif
                                 </div>
+
+                                @if ($site->wordpress_admin_url)
+                                    <div class="mt-2 text-xs text-gray-500 dark:text-gray-400 break-all">
+                                        {{ $site->wordpress_admin_url }}
+                                    </div>
+                                @endif
                             </div>
                         </div>
                     </div>
@@ -229,7 +246,7 @@
                             <div class="flex items-center justify-between">
                                 <span class="text-gray-500 dark:text-gray-400">Renews At</span>
                                 <span class="font-medium text-gray-900 dark:text-white">
-                                    {{ $site->subscription?->renews_at ? $site->subscription->renews_at->format('d M Y, h:i A') : '—' }}
+                                    {{ $site->subscription?->next_billing_at ? $site->subscription->next_billing_at->format('d M Y, h:i A') : '—' }}
                                 </span>
                             </div>
                         </div>

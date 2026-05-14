@@ -20,11 +20,17 @@ Route::get('/', function () {
 })->name('home');
 
 Route::middleware(['auth', 'verified', 'superadmin'])
-    ->prefix('admin')
-    ->name('admin.')
+    ->prefix('superadmin')
+    ->name('superadmin.')
     ->group(function () {
         Route::get('/', AdminDashboardController::class)->name('dashboard');
     });
+// Route::middleware(['auth', 'verified', 'superadmin'])
+//     ->prefix('admin')
+//     ->name('admin.')
+//     ->group(function () {
+//         Route::get('/', AdminDashboardController::class)->name('dashboard');
+//     });
 
 Route::middleware(['auth', 'verified'])->group(function () {
     /*

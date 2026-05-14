@@ -1,0 +1,12 @@
+[90m= [39m[34;4mApp\Models\User[39;24m {#5439
+    [34mid[39m: [35m1[39m,
+    [34mname[39m: "[32mPraveen Thamotharan[39m",
+    [34memail[39m: "[32mpraveenthamo99@gmail.com[39m",
+    [34memail_verified_at[39m: [36mnull[39m,
+    #[33mpassword[39m: "[32m$2y$12$SEYTXnQh2JwhRPBu5SOJZuKi0l0Ad2P7ZrWEpAcnko0r3CxMWxMCe[39m",
+    [34mrole[39m: "[32muser[39m",
+    #[33mremember_token[39m: "[32mqkWMTCwXGhmZrtTtzqEWHMdlkBHFn0iFJ6mpA6Hf2stWko2Pchh5MN5Evhhp[39m",
+    [34mcreated_at[39m: "[32m2026-03-19 14:00:16[39m",
+    [34mupdated_at[39m: "[32m2026-03-19 14:00:16[39m",
+  }
+

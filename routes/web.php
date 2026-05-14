@@ -8,6 +8,7 @@ use App\Http\Controllers\Webhooks\HitPayWebhookController;
 use App\Http\Controllers\WordPressSsoController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 
 Route::get('/', function () {
     return view('welcome', [
@@ -17,6 +18,13 @@ Route::get('/', function () {
         'phpVersion' => PHP_VERSION,
     ]);
 })->name('home');
+
+Route::middleware(['auth', 'verified', 'superadmin'])
+    ->prefix('admin')
+    ->name('admin.')
+    ->group(function () {
+        Route::get('/', AdminDashboardController::class)->name('dashboard');
+    });
 
 Route::middleware(['auth', 'verified'])->group(function () {
     /*

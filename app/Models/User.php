@@ -11,10 +11,14 @@ class User extends Authenticatable
 {
     use HasFactory, Notifiable;
 
+    public const ROLE_USER = 'user';
+    public const ROLE_SUPERADMIN = 'superadmin';
+
     protected $fillable = [
         'name',
         'email',
         'password',
+        'role',
     ];
 
     protected $hidden = [
@@ -48,5 +52,10 @@ class User extends Authenticatable
     public function paymentMethods(): HasMany
     {
         return $this->hasMany(PaymentMethod::class);
+    }
+
+    public function isSuperAdmin(): bool
+    {
+        return $this->role === self::ROLE_SUPERADMIN;
     }
 }

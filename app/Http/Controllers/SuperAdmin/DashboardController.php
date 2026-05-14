@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Http\Controllers\Admin;
+namespace App\Http\Controllers\SuperAdmin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Invoice;
@@ -56,7 +56,7 @@ class DashboardController extends Controller
             ->limit(8)
             ->get();
 
-        return view('admin.dashboard', compact(
+        return view('superadmin.dashboard', compact(
             'stats',
             'recentUsers',
             'recentSites',

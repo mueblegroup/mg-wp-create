@@ -4,11 +4,9 @@ use App\Http\Controllers\BillingController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\SiteController;
-use App\Http\Controllers\Webhooks\HitPayWebhookController;
 use App\Http\Controllers\WordPressSsoController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Admin\DashboardController as AdminDashboardController;
 
 Route::get('/', function () {
     return view('welcome', [
@@ -18,19 +16,6 @@ Route::get('/', function () {
         'phpVersion' => PHP_VERSION,
     ]);
 })->name('home');
-
-Route::middleware(['auth', 'verified', 'superadmin'])
-    ->prefix('superadmin')
-    ->name('superadmin.')
-    ->group(function () {
-        Route::get('/', AdminDashboardController::class)->name('dashboard');
-    });
-// Route::middleware(['auth', 'verified', 'superadmin'])
-//     ->prefix('admin')
-//     ->name('admin.')
-//     ->group(function () {
-//         Route::get('/', AdminDashboardController::class)->name('dashboard');
-//     });
 
 Route::middleware(['auth', 'verified'])->group(function () {
     /*
@@ -49,8 +34,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/sites/create', [SiteController::class, 'create'])->name('sites.create');
     Route::post('/sites', [SiteController::class, 'store'])->name('sites.store');
     Route::get('/sites/{site}', [SiteController::class, 'show'])->name('sites.show');
+
     Route::post('/sites/{site}/retry-provisioning', [SiteController::class, 'retryProvisioning'])
         ->name('sites.retry-provisioning');
+
     Route::delete('/sites/{site}', [SiteController::class, 'destroy'])->name('sites.destroy');
 
     /*
@@ -83,17 +70,5 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/sites/{site}/wp-admin-login', [WordPressSsoController::class, 'redirect'])
         ->name('sites.wp-admin-login');
 });
-
-/*
-|--------------------------------------------------------------------------
-| Public Webhooks
-|--------------------------------------------------------------------------
-|
-| HitPay needs to call this endpoint without auth/session/csrf.
-| Exclude this URI in App\Http\Middleware\VerifyCsrfToken as well:
-| protected $except = ['webhooks/hitpay'];
-|
-*/
-
 
 require __DIR__ . '/auth.php';

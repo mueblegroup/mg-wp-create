@@ -18,11 +18,6 @@
                     <x-nav-link :href="route('billing.index')" :active="request()->routeIs('billing.index')">
                         {{ __('Billing') }}
                     </x-nav-link>
-                    @if (Auth::user()?->isSuperAdmin())
-                        <x-nav-link :href="route('admin.dashboard')" :active="request()->routeIs('admin.*')">
-                            {{ __('Super Admin') }}
-                        </x-nav-link>
-                    @endif
                 </div>
             </div>
 
@@ -45,6 +40,11 @@
                         <x-dropdown-link :href="route('profile.edit')">
                             {{ __('Profile') }}
                         </x-dropdown-link>
+                        @if (Auth::user()?->isSuperAdmin())
+                            <x-dropdown-link :href="route('superadmin.dashboard')">
+                                {{ __('Open Superadmin Portal') }}
+                            </x-dropdown-link>
+                        @endif
 
                         <!-- Authentication -->
                         <form method="POST" action="{{ route('logout') }}">
@@ -78,11 +78,7 @@
             <x-responsive-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
                 {{ __('Dashboard') }}
             </x-responsive-nav-link>
-            @if (Auth::user()?->isSuperAdmin())
-                <x-responsive-nav-link :href="route('admin.dashboard')" :active="request()->routeIs('admin.*')">
-                    {{ __('Super Admin') }}
-                </x-responsive-nav-link>
-            @endif
+            
         </div>
 
         <!-- Responsive Settings Options -->
@@ -96,6 +92,7 @@
                 <x-responsive-nav-link :href="route('profile.edit')">
                     {{ __('Profile') }}
                 </x-responsive-nav-link>
+                
 
                 <!-- Authentication -->
                 <form method="POST" action="{{ route('logout') }}">

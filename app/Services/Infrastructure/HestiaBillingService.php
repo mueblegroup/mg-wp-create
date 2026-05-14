@@ -45,7 +45,7 @@ class HestiaBillingService
         throw new RuntimeException('Unable to login to Hestia. Check SSH key or password config.');
     }
 
-    public function suspendSite(Site $site): void
+    public function suspendSite(Site $site): array
     {
         $username = $site->hestia_username;
         $domain = $site->hestia_domain ?: $site->fqdn;
@@ -54,22 +54,16 @@ class HestiaBillingService
             throw new RuntimeException('Site is missing Hestia username or domain.');
         }
 
-        $ssh = $this->ssh();
         $command = sprintf(
-            'v-suspend-web-domain %s %s yes',
+            '/usr/local/hestia/bin/v-suspend-web-domain %s %s yes',
             escapeshellarg($username),
             escapeshellarg($domain)
         );
 
-        $output = $ssh->exec($command);
-        $exitStatus = $ssh->getExitStatus();
-
-        if ($exitStatus !== 0 && ! str_contains(strtolower($output), 'already')) {
-            throw new RuntimeException('Hestia suspend failed: ' . trim($output));
-        }
+        return $this->runHestiaCommand($command, 'suspend');
     }
 
-    public function unsuspendSite(Site $site): void
+    public function unsuspendSite(Site $site): array
     {
         $username = $site->hestia_username;
         $domain = $site->hestia_domain ?: $site->fqdn;
@@ -78,18 +72,34 @@ class HestiaBillingService
             throw new RuntimeException('Site is missing Hestia username or domain.');
         }
 
-        $ssh = $this->ssh();
         $command = sprintf(
-            'v-unsuspend-web-domain %s %s yes',
+            '/usr/local/hestia/bin/v-unsuspend-web-domain %s %s yes',
             escapeshellarg($username),
             escapeshellarg($domain)
         );
 
+        return $this->runHestiaCommand($command, 'unsuspend');
+    }
+
+    protected function runHestiaCommand(string $command, string $action): array
+    {
+        $ssh = $this->ssh();
+
         $output = $ssh->exec($command);
         $exitStatus = $ssh->getExitStatus();
 
-        if ($exitStatus !== 0 && ! str_contains(strtolower($output), 'already')) {
-            throw new RuntimeException('Hestia unsuspend failed: ' . trim($output));
+        $normalizedOutput = strtolower((string) $output);
+
+        if ($exitStatus !== 0 && ! str_contains($normalizedOutput, 'already')) {
+            throw new RuntimeException("Hestia {$action} failed: " . trim((string) $output));
         }
+
+        return [
+            'success' => true,
+            'action' => $action,
+            'command' => $command,
+            'exit_status' => $exitStatus,
+            'output' => trim((string) $output),
+        ];
     }
 }

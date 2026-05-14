@@ -133,8 +133,6 @@ class SiteController extends Controller
             return back()->with('error', 'This site is already suspended.');
         }
 
-        SuspendSiteJob::dispatch($site->id);
-
         $site->provisioningLogs()->create([
             'action' => 'superadmin_suspend_requested',
             'status' => 'info',
@@ -146,7 +144,9 @@ class SiteController extends Controller
             ],
         ]);
 
-        return back()->with('success', 'Site suspension queued.');
+        SuspendSiteJob::dispatch($site->id);
+
+        return back()->with('success', 'Site suspension queued. Refresh this page after the queue job completes.');
     }
 
     public function unsuspend(Site $site): RedirectResponse
@@ -154,8 +154,6 @@ class SiteController extends Controller
         if ($site->status !== Site::STATUS_SUSPENDED) {
             return back()->with('error', 'Only suspended sites can be unsuspended.');
         }
-
-        UnsuspendSiteJob::dispatch($site->id);
 
         $site->provisioningLogs()->create([
             'action' => 'superadmin_unsuspend_requested',
@@ -168,7 +166,9 @@ class SiteController extends Controller
             ],
         ]);
 
-        return back()->with('success', 'Site unsuspension queued.');
+        UnsuspendSiteJob::dispatch($site->id);
+
+        return back()->with('success', 'Site unsuspension queued. Refresh this page after the queue job completes.');
     }
 
     public function destroy(Site $site, SiteDeletionService $siteDeletionService): RedirectResponse

@@ -44,10 +44,10 @@
         @endif
 
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <x-admin.stat-card title="Site Status" :value="ucfirst(str_replace('_', ' ', $site->status))" />
-            <x-admin.stat-card title="Billing Status" :value="ucfirst(str_replace('_', ' ', $site->billing_status ?? '—'))" />
-            <x-admin.stat-card title="Plan" :value="$site->plan?->label ?? '—'" />
-            <x-admin.stat-card title="Theme" :value="$site->theme?->name ?? 'No Theme'" />
+            <x-superadmin.stat-card title="Site Status" :value="ucfirst(str_replace('_', ' ', $site->status))" />
+            <x-superadmin.stat-card title="Billing Status" :value="ucfirst(str_replace('_', ' ', $site->billing_status ?? '—'))" />
+            <x-superadmin.stat-card title="Plan" :value="$site->plan?->label ?? '—'" />
+            <x-superadmin.stat-card title="Theme" :value="$site->theme?->name ?? 'No Theme'" />
         </div>
 
         <div class="grid gap-6 lg:grid-cols-2">

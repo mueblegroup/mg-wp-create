@@ -18,23 +18,23 @@
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <x-admin.stat-card title="Total Users" :value="$stats['total_users']" />
-                <x-admin.stat-card title="Total Sites" :value="$stats['total_sites']" />
-                <x-admin.stat-card title="Active Sites" :value="$stats['active_sites']" />
-                <x-admin.stat-card title="Failed Sites" :value="$stats['failed_sites']" />
+                <x-superadmin.stat-card title="Total Users" :value="$stats['total_users']" />
+                <x-superadmin.stat-card title="Total Sites" :value="$stats['total_sites']" />
+                <x-superadmin.stat-card title="Active Sites" :value="$stats['active_sites']" />
+                <x-superadmin.stat-card title="Failed Sites" :value="$stats['failed_sites']" />
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <x-admin.stat-card title="Provisioning" :value="$stats['provisioning_sites']" />
-                <x-admin.stat-card title="Suspended Sites" :value="$stats['suspended_sites']" />
-                <x-admin.stat-card title="Active Subscriptions" :value="$stats['active_subscriptions']" />
-                <x-admin.stat-card title="Past Due" :value="$stats['past_due_subscriptions']" />
+                <x-superadmin.stat-card title="Provisioning" :value="$stats['provisioning_sites']" />
+                <x-superadmin.stat-card title="Suspended Sites" :value="$stats['suspended_sites']" />
+                <x-superadmin.stat-card title="Active Subscriptions" :value="$stats['active_subscriptions']" />
+                <x-superadmin.stat-card title="Past Due" :value="$stats['past_due_subscriptions']" />
             </div>
 
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                <x-admin.stat-card title="Monthly Revenue" value="RM {{ number_format($stats['mrr'], 2) }}" />
-                <x-admin.stat-card title="Annual Revenue" value="RM {{ number_format($stats['arr'], 2) }}" />
-                <x-admin.stat-card title="Pending Invoices" :value="$stats['pending_invoices']" />
+                <x-superadmin.stat-card title="Monthly Revenue" value="RM {{ number_format($stats['mrr'], 2) }}" />
+                <x-superadmin.stat-card title="Annual Revenue" value="RM {{ number_format($stats['arr'], 2) }}" />
+                <x-superadmin.stat-card title="Pending Invoices" :value="$stats['pending_invoices']" />
             </div>
 
             <div class="grid gap-6 lg:grid-cols-2">

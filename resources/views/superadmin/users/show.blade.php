@@ -12,10 +12,10 @@
         </div>
 
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <x-admin.stat-card title="Role" :value="ucfirst($user->role)" />
-            <x-admin.stat-card title="Sites" :value="$user->sites->count()" />
-            <x-admin.stat-card title="Subscriptions" :value="$user->subscriptions->count()" />
-            <x-admin.stat-card title="Invoices" :value="$user->invoices->count()" />
+            <x-superadmin.stat-card title="Role" :value="ucfirst($user->role)" />
+            <x-superadmin.stat-card title="Sites" :value="$user->sites->count()" />
+            <x-superadmin.stat-card title="Subscriptions" :value="$user->subscriptions->count()" />
+            <x-superadmin.stat-card title="Invoices" :value="$user->invoices->count()" />
         </div>
 
         <div class="rounded-2xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">

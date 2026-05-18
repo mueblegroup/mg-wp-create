@@ -67,10 +67,14 @@
                                 </button>
                             </form>
                         @else
-                            <a href="{{ route('billing.index', ['site_id' => $site->id]) }}"
-                               class="inline-flex items-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
-                                View Billing
-                            </a>
+                            <form method="POST" action="{{ route('billing.sites.pay', $site) }}">
+                                @csrf
+
+                                <button type="submit"
+                                        class="inline-flex w-full items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 sm:w-auto">
+                                    Make Payment
+                                </button>
+                            </form>
                         @endif
                     @endif
 
@@ -144,10 +148,14 @@
                                     </button>
                                 </form>
                             @else
-                                <a href="{{ route('billing.index', ['site_id' => $site->id]) }}"
-                                   class="inline-flex w-full items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 sm:w-auto">
-                                    View Billing
-                                </a>
+                                <form method="POST" action="{{ route('billing.sites.pay', $site) }}">
+                                    @csrf
+
+                                    <button type="submit"
+                                            class="inline-flex w-full items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 sm:w-auto">
+                                        Make Payment
+                                    </button>
+                                </form>
                             @endif
                         </div>
                     </div>
@@ -478,10 +486,14 @@
                                             </button>
                                         </form>
                                     @else
-                                        <a href="{{ route('billing.index', ['site_id' => $site->id]) }}"
-                                           class="inline-flex w-full items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
-                                            View Billing
-                                        </a>
+                                        <form method="POST" action="{{ route('billing.sites.pay', $site) }}">
+                                            @csrf
+
+                                            <button type="submit"
+                                                    class="inline-flex w-full items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+                                                Make Payment
+                                            </button>
+                                        </form>
                                     @endif
                                 </div>
                             @endif
@@ -522,17 +534,19 @@
                                 @if ($pendingInvoice)
                                     <form method="POST" action="{{ route('billing.invoices.pay', $pendingInvoice) }}">
                                         @csrf
-
                                         <button type="submit"
-                                                class="inline-flex w-full items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+                                                class="inline-flex items-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
                                             Make Payment
                                         </button>
                                     </form>
                                 @else
-                                    <a href="{{ route('billing.index', ['site_id' => $site->id]) }}"
-                                       class="inline-flex w-full items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
-                                        View Billing
-                                    </a>
+                                    <form method="POST" action="{{ route('billing.sites.pay', $site) }}">
+                                        @csrf
+                                        <button type="submit"
+                                                class="inline-flex items-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+                                            Make Payment
+                                        </button>
+                                    </form>
                                 @endif
                             @endif
 
@@ -574,6 +588,11 @@
                                     </button>
                                 </form>
                             @endif
+
+                            <a href="{{ route('billing.index', ['site_id' => $site->id]) }}"
+                               class="inline-flex w-full items-center justify-center rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700">
+                                Change Package
+                            </a>
                         </div>
                     </div>
                 </div>

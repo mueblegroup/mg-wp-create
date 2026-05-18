@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreSiteRequest;
 use App\Jobs\ProvisionSiteJob;
 use App\Models\Plan;
+use App\Services\Billing\BillingService;
 use App\Models\Site;
 use App\Models\Subscription;
 use App\Models\Theme;
@@ -52,7 +53,7 @@ class SiteController extends Controller
         ]);
     }
 
-    public function store(StoreSiteRequest $request): RedirectResponse
+    public function store(StoreSiteRequest $request, BillingService $billingService): RedirectResponse
     {
         $user = $request->user();
 
@@ -146,7 +147,7 @@ class SiteController extends Controller
             $site->provisioningLogs()->create([
                 'action' => 'site_created',
                 'status' => 'info',
-                'message' => 'Site draft created and awaiting payment before provisioning.',
+                'message' => 'Site draft created. Customer is being redirected directly to payment.',
                 'context' => [
                     'plan_id' => $plan->id,
                     'plan' => $plan->name,
@@ -163,9 +164,28 @@ class SiteController extends Controller
             return $site;
         });
 
-        return redirect()
-            ->route('billing.index', ['site_id' => $site->id])
-            ->with('success', 'Site draft created. Complete payment to start provisioning.');
+        try {
+            $result = $billingService->startCheckout(
+                user: $user,
+                plan: $plan,
+                site: $site,
+                purpose: 'First payment for ' . $site->name
+            );
+
+            if (! empty($result['checkout_url'])) {
+                return redirect()->away($result['checkout_url']);
+            }
+
+            return redirect()
+                ->route('sites.show', $site)
+                ->with('error', 'Site draft created, but payment URL could not be generated. Please click Make Payment.');
+        } catch (Throwable $e) {
+            report($e);
+
+            return redirect()
+                ->route('sites.show', $site)
+                ->with('error', 'Site draft created, but payment could not start: ' . $e->getMessage());
+        }
     }
 
     public function show(Site $site): View

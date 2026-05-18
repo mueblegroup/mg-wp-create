@@ -3,14 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\Billing\StartCheckoutRequest;
+use App\Models\Invoice;
 use App\Models\Plan;
 use App\Models\Site;
 use App\Services\Billing\BillingService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
-use App\Models\Invoice;
-use App\Models\Subscription;
+use Throwable;
 
 class BillingController extends Controller
 {
@@ -22,10 +22,27 @@ class BillingController extends Controller
     {
         $user = $request->user();
 
-        $sites = $user->sites()->latest()->get();
-        $plans = Plan::query()->where('is_active', true)->orderBy('sort_order')->get();
-        $subscriptions = $user->subscriptions()->with(['plan', 'site'])->latest()->get();
-        $invoices = $user->invoices()->with(['subscription.plan', 'subscription.site'])->latest()->limit(20)->get();
+        $sites = $user->sites()
+            ->with(['plan', 'subscription'])
+            ->latest()
+            ->get();
+
+        $plans = Plan::query()
+            ->where('is_active', true)
+            ->orderBy('sort_order')
+            ->get();
+
+        $subscriptions = $user->subscriptions()
+            ->with(['plan', 'site'])
+            ->latest()
+            ->get();
+
+        $invoices = $user->invoices()
+            ->with(['subscription.plan', 'subscription.site', 'site'])
+            ->latest()
+            ->limit(20)
+            ->get();
+
         $selectedSiteId = $request->integer('site_id');
 
         return view('billing.index', compact(
@@ -37,25 +54,64 @@ class BillingController extends Controller
         ));
     }
 
+    /**
+     * Upgrade / downgrade checkout.
+     *
+     * New site creation should NOT come here anymore.
+     * Renewals should preferably use paySite() or payInvoice().
+     */
     public function checkout(StartCheckoutRequest $request): RedirectResponse
     {
-        $site = Site::where('user_id', $request->user()->id)
+        $site = Site::query()
+            ->where('user_id', $request->user()->id)
             ->findOrFail($request->integer('site_id'));
 
-        $plan = Plan::findOrFail($request->integer('plan_id'));
+        $plan = Plan::query()
+            ->where('is_active', true)
+            ->findOrFail($request->integer('plan_id'));
 
-        $result = $this->billingService->startCheckout($request->user(), $plan, $site);
+        try {
+            $result = $this->billingService->startCheckout(
+                user: $request->user(),
+                plan: $plan,
+                site: $site,
+                purpose: 'Package payment for ' . $site->name
+            );
 
-        if (empty($result['checkout_url'])) {
-            return back()->with('error', 'Unable to generate HitPay checkout URL.');
+            if (empty($result['checkout_url'])) {
+                return back()->with('error', 'Unable to generate HitPay checkout URL.');
+            }
+
+            return redirect()->away($result['checkout_url']);
+        } catch (Throwable $e) {
+            report($e);
+
+            return back()->with('error', 'Unable to start payment: ' . $e->getMessage());
         }
-
-        return redirect()->away($result['checkout_url']);
     }
 
-    public function success(): View
+    /**
+     * One-click payment from site page.
+     *
+     * This uses the site's current subscription/plan and sends user directly to HitPay.
+     */
+    public function paySite(Request $request, Site $site): RedirectResponse
     {
-        return view('billing.success');
+        abort_unless($site->user_id === $request->user()->id, 403);
+
+        try {
+            $result = $this->billingService->startSitePayment($request->user(), $site);
+
+            if (empty($result['checkout_url'])) {
+                return back()->with('error', 'Unable to generate HitPay payment URL.');
+            }
+
+            return redirect()->away($result['checkout_url']);
+        } catch (Throwable $e) {
+            report($e);
+
+            return back()->with('error', 'Unable to start payment: ' . $e->getMessage());
+        }
     }
 
     public function payInvoice(Request $request, Invoice $invoice): RedirectResponse
@@ -68,13 +124,24 @@ class BillingController extends Controller
             return back()->with('error', 'This invoice is not pending payment.');
         }
 
-        $result = $this->billingService->startInvoicePayment($request->user(), $invoice);
+        try {
+            $result = $this->billingService->startInvoicePayment($request->user(), $invoice);
 
-        if (empty($result['checkout_url'])) {
-            return back()->with('error', 'Unable to generate HitPay payment URL.');
+            if (empty($result['checkout_url'])) {
+                return back()->with('error', 'Unable to generate HitPay payment URL.');
+            }
+
+            return redirect()->away($result['checkout_url']);
+        } catch (Throwable $e) {
+            report($e);
+
+            return back()->with('error', 'Unable to start payment: ' . $e->getMessage());
         }
+    }
 
-        return redirect()->away($result['checkout_url']);
+    public function success(): View
+    {
+        return view('billing.success');
     }
 
     public function cancel(): View

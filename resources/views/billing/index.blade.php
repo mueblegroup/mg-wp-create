@@ -58,10 +58,10 @@
                     <div class="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
                         <div class="border-b border-gray-100 px-6 py-5">
                             <h3 class="text-lg font-semibold text-gray-900">
-                                Start Subscription
+                                Change Package
                             </h3>
                             <p class="mt-1 text-sm text-gray-500">
-                                Choose a site and a plan, then continue to HitPay checkout.
+                                Use this page only when you want to upgrade or downgrade a site's package.
                             </p>
                         </div>
 
@@ -152,7 +152,7 @@
                                             type="submit"
                                             class="inline-flex items-center rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-indigo-700"
                                         >
-                                            Continue to Payment
+                                            Change Package & Pay
                                         </button>
                                     </div>
                                 </form>

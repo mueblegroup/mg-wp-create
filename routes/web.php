@@ -46,11 +46,19 @@ Route::middleware(['auth', 'verified'])->group(function () {
     |--------------------------------------------------------------------------
     */
     Route::get('/billing', [BillingController::class, 'index'])->name('billing.index');
+
+    // Used for upgrade/downgrade plan changes from Billing page.
     Route::post('/billing/checkout', [BillingController::class, 'checkout'])->name('billing.checkout');
+
+    // Used by Site page "Make Payment" button. No plan/site choosing again.
+    Route::post('/billing/sites/{site}/pay', [BillingController::class, 'paySite'])->name('billing.sites.pay');
+
+    // Used when a specific pending invoice already exists.
+    Route::post('/billing/invoices/{invoice}/pay', [BillingController::class, 'payInvoice'])
+        ->name('billing.invoices.pay');
+
     Route::get('/billing/success', [BillingController::class, 'success'])->name('billing.success');
     Route::get('/billing/cancel', [BillingController::class, 'cancel'])->name('billing.cancel');
-    Route::post('/billing/invoices/{invoice}/pay', [BillingController::class, 'payInvoice'])
-    ->name('billing.invoices.pay');
 
     /*
     |--------------------------------------------------------------------------

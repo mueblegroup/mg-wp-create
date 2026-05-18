@@ -12,6 +12,7 @@ use App\Models\Subscription;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 class BillingService
 {
@@ -21,9 +22,27 @@ class BillingService
     ) {
     }
 
-    public function startCheckout(User $user, Plan $plan, Site $site): array
+    /**
+     * Start payment for a selected plan.
+     *
+     * Used for:
+     * - first payment after site creation
+     * - upgrade/downgrade from Billing page
+     *
+     * Important:
+     * We intentionally use HitPay payment-requests instead of recurring-billing
+     * because recurring-billing is currently returning "Forbidden" for your API key/account.
+     */
+    public function startCheckout(User $user, Plan $plan, Site $site, ?string $purpose = null): array
     {
-        return DB::transaction(function () use ($user, $plan, $site) {
+        return DB::transaction(function () use ($user, $plan, $site, $purpose) {
+            if ((int) $site->user_id !== (int) $user->id) {
+                throw new RuntimeException('Site does not belong to this user.');
+            }
+
+            $currency = $plan->currency ?? config('services.hitpay.currency', 'MYR');
+            $billingCycle = $plan->billing_cycle ?? 'monthly';
+
             $subscription = Subscription::query()->updateOrCreate(
                 ['site_id' => $site->id],
                 [
@@ -31,85 +50,109 @@ class BillingService
                     'plan_id' => $plan->id,
                     'provider' => 'hitpay',
                     'status' => Subscription::STATUS_PENDING,
-                    'currency' => config('services.hitpay.currency', 'MYR'),
+                    'currency' => $currency,
                     'amount' => $plan->price,
-                    'billing_cycle' => $plan->billing_cycle ?? 'monthly',
+                    'billing_cycle' => $billingCycle,
                     'starts_at' => now(),
                 ]
             );
 
-            if (! $subscription->provider_plan_id) {
-                $planPayload = $this->hitPayClient->createPlan([
-                    'name' => $plan->name,
-                    'description' => $plan->description ?? $plan->name,
-                    'currency' => config('services.hitpay.currency', 'MYR'),
-                    'amount' => $plan->price,
-                    'cycle' => $plan->billing_cycle ?? 'monthly',
-                    'reference' => 'plan_' . $plan->id,
-                ]);
-
-                $subscription->update([
-                    'provider_plan_id' => $planPayload['id'] ?? null,
-                    'meta' => array_merge($subscription->meta ?? [], [
-                        'provider_plan_payload' => $planPayload,
-                    ]),
-                ]);
-            }
-
-            $invoice = Invoice::create([
-                'subscription_id' => $subscription->id,
-                'user_id' => $user->id,
-                'site_id' => $site->id,
-                'invoice_number' => 'INV-' . now()->format('YmdHis') . '-' . Str::upper(Str::random(6)),
-                'status' => Invoice::STATUS_PENDING,
-                'currency' => config('services.hitpay.currency', 'MYR'),
-                'amount' => $plan->price,
-                'billing_period_start' => now(),
-                'billing_period_end' => ($plan->billing_cycle ?? 'monthly') === 'yearly'
-                    ? now()->copy()->addYear()
-                    : now()->copy()->addMonth(),
-                'due_at' => now(),
-            ]);
-
-            $reference = 'sub_' . $subscription->id . '_inv_' . $invoice->id;
-
-            $recurring = $this->hitPayClient->createRecurringBilling([
-                'plan_id' => $subscription->provider_plan_id,
-                'customer_email' => $user->email,
-                'customer_name' => $user->name,
-                'start_date' => $this->hitpayStartDate(),
-                'amount' => $plan->price,
-                'currency' => config('services.hitpay.currency', 'MYR'),
-                'redirect_url' => config('services.hitpay.success_url'),
-                'reference' => $reference,
-                'send_email' => 'true',
-                'webhook' => config('services.hitpay.webhook_url'),
-            ]);
-
-            $subscription->update([
-                'provider_subscription_id' => $recurring['id'] ?? null,
-                'provider_customer_reference' => $reference,
-                'meta' => array_merge($subscription->meta ?? [], [
-                    'provider_subscription_payload' => $recurring,
-                ]),
-            ]);
-
             $site->update([
-                'status' => Site::STATUS_PENDING_PAYMENT,
+                'plan_id' => $plan->id,
+                'status' => $site->provisioned_at ? $site->status : Site::STATUS_PENDING_PAYMENT,
                 'billing_status' => Subscription::STATUS_PENDING,
             ]);
 
-            return [
-                'subscription' => $subscription->fresh(),
-                'invoice' => $invoice,
-                'checkout_url' => $recurring['url'] ?? null,
-                'provider_payload' => $recurring,
-            ];
+            $invoice = $this->getOrCreatePendingInvoice(
+                subscription: $subscription,
+                user: $user,
+                site: $site,
+                amount: (float) $plan->price,
+                currency: $currency,
+                billingCycle: $billingCycle,
+            );
+
+            return $this->createHitPayPaymentRequest(
+                user: $user,
+                subscription: $subscription,
+                invoice: $invoice,
+                purpose: $purpose ?: 'Payment for ' . ($site->name ?? 'site subscription')
+            );
         });
     }
-    protected function hitpayStartDate(): string
+
+    /**
+     * One-click site payment.
+     *
+     * Used by site show page:
+     * "Make Payment" → directly HitPay, no billing form.
+     */
+    public function startSitePayment(User $user, Site $site): array
     {
-        return now('Asia/Kuala_Lumpur')->format('Y-m-d');
+        return DB::transaction(function () use ($user, $site) {
+            if ((int) $site->user_id !== (int) $user->id) {
+                throw new RuntimeException('Site does not belong to this user.');
+            }
+
+            $site->loadMissing(['plan', 'subscription.plan']);
+
+            $plan = $site->subscription?->plan ?: $site->plan;
+
+            if (! $plan) {
+                throw new RuntimeException('This site does not have a package selected.');
+            }
+
+            if (! $plan->is_active) {
+                throw new RuntimeException('The selected package is no longer active.');
+            }
+
+            $currency = $site->subscription?->currency
+                ?: $plan->currency
+                ?: config('services.hitpay.currency', 'MYR');
+
+            $billingCycle = $site->subscription?->billing_cycle
+                ?: $plan->billing_cycle
+                ?: 'monthly';
+
+            $subscription = Subscription::query()->updateOrCreate(
+                ['site_id' => $site->id],
+                [
+                    'user_id' => $user->id,
+                    'plan_id' => $plan->id,
+                    'provider' => 'hitpay',
+                    'status' => $site->subscription?->status ?: Subscription::STATUS_PENDING,
+                    'currency' => $currency,
+                    'amount' => $plan->price,
+                    'billing_cycle' => $billingCycle,
+                    'starts_at' => $site->subscription?->starts_at ?: now(),
+                ]
+            );
+
+            $invoice = $subscription->invoices()
+                ->where('status', Invoice::STATUS_PENDING)
+                ->latest()
+                ->first();
+
+            if (! $invoice) {
+                $invoice = $this->getOrCreatePendingInvoice(
+                    subscription: $subscription,
+                    user: $user,
+                    site: $site,
+                    amount: (float) $subscription->amount,
+                    currency: $subscription->currency ?: $currency,
+                    billingCycle: $subscription->billing_cycle ?: $billingCycle,
+                );
+            }
+
+            return $this->createHitPayPaymentRequest(
+                user: $user,
+                subscription: $subscription,
+                invoice: $invoice,
+                purpose: $site->provisioned_at
+                    ? 'Renewal payment for ' . $site->name
+                    : 'First payment for ' . $site->name
+            );
+        });
     }
 
     public function startInvoicePayment(User $user, Invoice $invoice): array
@@ -117,50 +160,106 @@ class BillingService
         return DB::transaction(function () use ($user, $invoice) {
             $invoice->load(['subscription.plan', 'site']);
 
-            if ($invoice->user_id !== $user->id) {
-                throw new \RuntimeException('Invoice does not belong to this user.');
+            if ((int) $invoice->user_id !== (int) $user->id) {
+                throw new RuntimeException('Invoice does not belong to this user.');
             }
 
             if ($invoice->status !== Invoice::STATUS_PENDING) {
-                throw new \RuntimeException('Invoice is not pending payment.');
+                throw new RuntimeException('Invoice is not pending payment.');
             }
 
             $subscription = $invoice->subscription;
 
             if (! $subscription) {
-                throw new \RuntimeException('Invoice is missing subscription.');
+                throw new RuntimeException('Invoice is missing subscription.');
             }
 
-            $reference = 'sub_' . $subscription->id . '_inv_' . $invoice->id;
-
-            $paymentRequest = $this->hitPayClient->createPaymentRequest([
-                'amount' => $invoice->amount,
-                'currency' => $invoice->currency ?: config('services.hitpay.currency', 'MYR'),
-                'email' => $user->email,
-                'name' => $user->name,
-                'purpose' => 'Renewal payment for ' . ($invoice->site?->name ?? 'site subscription'),
-                'reference_number' => $reference,
-                'redirect_url' => config('services.hitpay.success_url'),
-                'webhook' => config('services.hitpay.webhook_url'),
-            ]);
-
-            $invoice->update([
-                'provider_invoice_id' => $paymentRequest['id'] ?? $invoice->provider_invoice_id,
-                'meta' => array_merge($invoice->meta ?? [], [
-                    'payment_request_payload' => $paymentRequest,
-                    'payment_reference' => $reference,
-                ]),
-            ]);
-
-            return [
-                'invoice' => $invoice->fresh(),
-                'checkout_url' => $paymentRequest['url']
-                    ?? $paymentRequest['payment_url']
-                    ?? $paymentRequest['checkout_url']
-                    ?? null,
-                'provider_payload' => $paymentRequest,
-            ];
+            return $this->createHitPayPaymentRequest(
+                user: $user,
+                subscription: $subscription,
+                invoice: $invoice,
+                purpose: 'Payment for ' . ($invoice->site?->name ?? 'site subscription')
+            );
         });
+    }
+
+    protected function createHitPayPaymentRequest(
+        User $user,
+        Subscription $subscription,
+        Invoice $invoice,
+        string $purpose
+    ): array {
+        $reference = 'sub_' . $subscription->id . '_inv_' . $invoice->id;
+
+        $paymentRequest = $this->hitPayClient->createPaymentRequest([
+            'amount' => $invoice->amount,
+            'currency' => $invoice->currency ?: config('services.hitpay.currency', 'MYR'),
+            'email' => $user->email,
+            'name' => $user->name,
+            'purpose' => $purpose,
+            'reference_number' => $reference,
+            'redirect_url' => config('services.hitpay.success_url'),
+            'webhook' => config('services.hitpay.webhook_url'),
+        ]);
+
+        $invoice->update([
+            'provider_invoice_id' => $paymentRequest['id'] ?? $invoice->provider_invoice_id,
+            'meta' => array_merge($invoice->meta ?? [], [
+                'payment_request_payload' => $paymentRequest,
+                'payment_reference' => $reference,
+            ]),
+        ]);
+
+        $subscription->update([
+            'provider_customer_reference' => $reference,
+            'meta' => array_merge($subscription->meta ?? [], [
+                'last_payment_request_payload' => $paymentRequest,
+                'last_payment_reference' => $reference,
+            ]),
+        ]);
+
+        return [
+            'subscription' => $subscription->fresh(),
+            'invoice' => $invoice->fresh(),
+            'checkout_url' => $paymentRequest['url']
+                ?? $paymentRequest['payment_url']
+                ?? $paymentRequest['checkout_url']
+                ?? null,
+            'provider_payload' => $paymentRequest,
+        ];
+    }
+
+    protected function getOrCreatePendingInvoice(
+        Subscription $subscription,
+        User $user,
+        Site $site,
+        float $amount,
+        string $currency,
+        string $billingCycle
+    ): Invoice {
+        $existing = $subscription->invoices()
+            ->where('status', Invoice::STATUS_PENDING)
+            ->latest()
+            ->first();
+
+        if ($existing) {
+            return $existing;
+        }
+
+        return Invoice::create([
+            'subscription_id' => $subscription->id,
+            'user_id' => $user->id,
+            'site_id' => $site->id,
+            'invoice_number' => 'INV-' . now()->format('YmdHis') . '-' . Str::upper(Str::random(6)),
+            'status' => Invoice::STATUS_PENDING,
+            'currency' => $currency,
+            'amount' => $amount,
+            'billing_period_start' => now(),
+            'billing_period_end' => $billingCycle === 'yearly'
+                ? now()->copy()->addYear()
+                : now()->copy()->addMonth(),
+            'due_at' => now(),
+        ]);
     }
 
     public function handleSuccessfulPayment(Subscription $subscription, Invoice $invoice, array $normalized): void
@@ -172,7 +271,9 @@ class BillingService
                 'paid_at' => now(),
                 'failed_at' => null,
                 'failure_reason' => null,
-                'meta' => $normalized['raw'],
+                'meta' => array_merge($invoice->meta ?? [], [
+                    'successful_payment_payload' => $normalized['raw'],
+                ]),
             ]);
 
             $subscription->paymentAttempts()->updateOrCreate(
@@ -181,7 +282,7 @@ class BillingService
                 ],
                 [
                     'invoice_id' => $invoice->id,
-                    'provider_event_type' => 'charge.created',
+                    'provider_event_type' => 'payment.completed',
                     'provider_reference' => $subscription->provider_customer_reference,
                     'status' => 'succeeded',
                     'amount' => $normalized['amount'],
@@ -214,6 +315,7 @@ class BillingService
         });
 
         $subscription->refresh();
+
         $site = $subscription->site()->first();
 
         if (! $site) {
@@ -244,6 +346,7 @@ class BillingService
 
         if ($site->status === Site::STATUS_SUSPENDED) {
             UnsuspendSiteJob::dispatch($site->id);
+
             return;
         }
 
@@ -260,7 +363,7 @@ class BillingService
         DB::transaction(function () use ($subscription, $invoice, $payload, $reason) {
             $subscription->paymentAttempts()->create([
                 'invoice_id' => $invoice?->id,
-                'provider_event_type' => 'charge.failed',
+                'provider_event_type' => 'payment.failed',
                 'provider_charge_id' => $payload['id'] ?? null,
                 'provider_reference' => $subscription->provider_customer_reference,
                 'status' => 'failed',

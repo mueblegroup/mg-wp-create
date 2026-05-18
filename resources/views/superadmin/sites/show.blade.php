@@ -135,6 +135,56 @@
             <div class="mt-5 space-y-3">
                 @forelse ($site->provisioningLogs as $log)
                     @php
+                        $subscription = $site->subscription;
+
+                        $paymentRequiredStatuses = [
+                            \App\Models\Subscription::STATUS_PENDING,
+                            \App\Models\Subscription::STATUS_PAST_DUE,
+                            \App\Models\Subscription::STATUS_GRACE_PERIOD,
+                            \App\Models\Subscription::STATUS_SUSPENDED,
+                        ];
+
+                        $requiresPayment = $subscription && in_array($subscription->status, $paymentRequiredStatuses, true);
+                    @endphp
+
+                    @if ($requiresPayment)
+                        <div class="rounded-2xl border border-yellow-200 bg-yellow-50 p-5 text-yellow-800 dark:border-yellow-900/40 dark:bg-yellow-900/20 dark:text-yellow-200">
+                            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <div class="font-semibold">
+                                        Payment Required
+                                    </div>
+
+                                    <div class="mt-1 text-sm">
+                                        @if ($subscription->status === \App\Models\Subscription::STATUS_PAST_DUE)
+                                            Your subscription renewal payment is due.
+                                            @if ($subscription->grace_ends_at)
+                                                Please pay before {{ $subscription->grace_ends_at->format('d M Y, h:i A') }} to avoid suspension.
+                                            @endif
+                                        @elseif ($subscription->status === \App\Models\Subscription::STATUS_SUSPENDED)
+                                            This site has been suspended because payment is overdue. Make payment to reactivate it.
+                                        @elseif ($subscription->status === \App\Models\Subscription::STATUS_PENDING)
+                                            Your subscription is pending payment. Complete payment to activate this site.
+                                        @else
+                                            Your subscription needs attention. Please make payment to continue service.
+                                        @endif
+                                    </div>
+                                </div>
+
+                                <form method="POST" action="{{ route('billing.checkout') }}" class="shrink-0">
+                                    @csrf
+                                    <input type="hidden" name="site_id" value="{{ $site->id }}">
+                                    <input type="hidden" name="plan_id" value="{{ $site->plan_id }}">
+
+                                    <button type="submit"
+                                            class="inline-flex w-full items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200 sm:w-auto">
+                                        Make Payment
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    @endif
+                    @php
                         $statusClasses = match ($log->status) {
                             'success' => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
                             'error' => 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',

@@ -112,6 +112,57 @@ class BillingService
         return now('Asia/Kuala_Lumpur')->format('Y-m-d');
     }
 
+    public function startInvoicePayment(User $user, Invoice $invoice): array
+    {
+        return DB::transaction(function () use ($user, $invoice) {
+            $invoice->load(['subscription.plan', 'site']);
+
+            if ($invoice->user_id !== $user->id) {
+                throw new \RuntimeException('Invoice does not belong to this user.');
+            }
+
+            if ($invoice->status !== Invoice::STATUS_PENDING) {
+                throw new \RuntimeException('Invoice is not pending payment.');
+            }
+
+            $subscription = $invoice->subscription;
+
+            if (! $subscription) {
+                throw new \RuntimeException('Invoice is missing subscription.');
+            }
+
+            $reference = 'sub_' . $subscription->id . '_inv_' . $invoice->id;
+
+            $paymentRequest = $this->hitPayClient->createPaymentRequest([
+                'amount' => $invoice->amount,
+                'currency' => $invoice->currency ?: config('services.hitpay.currency', 'MYR'),
+                'email' => $user->email,
+                'name' => $user->name,
+                'purpose' => 'Renewal payment for ' . ($invoice->site?->name ?? 'site subscription'),
+                'reference_number' => $reference,
+                'redirect_url' => config('services.hitpay.success_url'),
+                'webhook' => config('services.hitpay.webhook_url'),
+            ]);
+
+            $invoice->update([
+                'provider_invoice_id' => $paymentRequest['id'] ?? $invoice->provider_invoice_id,
+                'meta' => array_merge($invoice->meta ?? [], [
+                    'payment_request_payload' => $paymentRequest,
+                    'payment_reference' => $reference,
+                ]),
+            ]);
+
+            return [
+                'invoice' => $invoice->fresh(),
+                'checkout_url' => $paymentRequest['url']
+                    ?? $paymentRequest['payment_url']
+                    ?? $paymentRequest['checkout_url']
+                    ?? null,
+                'provider_payload' => $paymentRequest,
+            ];
+        });
+    }
+
     public function handleSuccessfulPayment(Subscription $subscription, Invoice $invoice, array $normalized): void
     {
         DB::transaction(function () use ($subscription, $invoice, $normalized) {

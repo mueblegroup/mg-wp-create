@@ -177,6 +177,7 @@ class SiteController extends Controller
             'theme',
             'domains',
             'subscription',
+            'subscription.invoices',
             'provisioningLogs' => fn ($query) => $query->latest(),
         ]);
 

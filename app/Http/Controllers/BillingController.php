@@ -9,6 +9,8 @@ use App\Services\Billing\BillingService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
+use App\Models\Invoice;
+use App\Models\Subscription;
 
 class BillingController extends Controller
 {
@@ -54,6 +56,25 @@ class BillingController extends Controller
     public function success(): View
     {
         return view('billing.success');
+    }
+
+    public function payInvoice(Request $request, Invoice $invoice): RedirectResponse
+    {
+        if ($invoice->user_id !== $request->user()->id) {
+            abort(403);
+        }
+
+        if ($invoice->status !== Invoice::STATUS_PENDING) {
+            return back()->with('error', 'This invoice is not pending payment.');
+        }
+
+        $result = $this->billingService->startInvoicePayment($request->user(), $invoice);
+
+        if (empty($result['checkout_url'])) {
+            return back()->with('error', 'Unable to generate HitPay payment URL.');
+        }
+
+        return redirect()->away($result['checkout_url']);
     }
 
     public function cancel(): View

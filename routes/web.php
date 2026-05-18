@@ -49,6 +49,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/billing/checkout', [BillingController::class, 'checkout'])->name('billing.checkout');
     Route::get('/billing/success', [BillingController::class, 'success'])->name('billing.success');
     Route::get('/billing/cancel', [BillingController::class, 'cancel'])->name('billing.cancel');
+    Route::post('/billing/invoices/{invoice}/pay', [BillingController::class, 'payInvoice'])
+    ->name('billing.invoices.pay');
 
     /*
     |--------------------------------------------------------------------------

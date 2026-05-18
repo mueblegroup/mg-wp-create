@@ -42,6 +42,13 @@ class Site extends Model
         'provisioned_at',
         'suspended_at',
         'wordpress_sso_secret',
+
+        'suspension_requested_at',
+        'suspension_verified_at',
+        'suspension_last_checked_at',
+        'suspension_last_failed_at',
+        'suspension_attempts',
+        'suspension_last_error',
     ];
 
     protected array $temporaryProvisioningData = [];
@@ -52,6 +59,12 @@ class Site extends Model
             'custom_domain_enabled' => 'boolean',
             'provisioned_at' => 'datetime',
             'suspended_at' => 'datetime',
+
+            'suspension_requested_at' => 'datetime',
+            'suspension_verified_at' => 'datetime',
+            'suspension_last_checked_at' => 'datetime',
+            'suspension_last_failed_at' => 'datetime',
+            'suspension_attempts' => 'integer',
         ];
     }
 

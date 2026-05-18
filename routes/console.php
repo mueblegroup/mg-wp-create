@@ -11,3 +11,8 @@ Artisan::command('inspire', function () {
 Schedule::command('billing:check-overdue-subscriptions')
     ->everyMinute()
     ->withoutOverlapping();
+
+Schedule::command('sites:verify-suspensions --limit=50')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->runInBackground();

@@ -197,4 +197,88 @@ class HestiaService
             'body' => $body,
         ];
     }
+
+    public function listUser(string $username): array
+    {
+        return $this->command('v-list-user', [
+            $username,
+            'json',
+        ]);
+    }
+
+    public function listWebDomain(string $username, string $domain): array
+    {
+        return $this->command('v-list-web-domain', [
+            $username,
+            $domain,
+            'json',
+        ]);
+    }
+
+    public function isUserSuspended(string $username): bool
+    {
+        $result = $this->listUser($username);
+
+        $data = $result['data'] ?? [];
+
+        if (isset($data[$username])) {
+            $user = $data[$username];
+
+            return $this->hestiaSuspendedValueIsTrue(
+                $user['SUSPENDED'] ?? $user['suspended'] ?? null
+            );
+        }
+
+        foreach ($data as $user) {
+            if (is_array($user)) {
+                return $this->hestiaSuspendedValueIsTrue(
+                    $user['SUSPENDED'] ?? $user['suspended'] ?? null
+                );
+            }
+        }
+
+        return false;
+    }
+
+    public function isWebDomainSuspended(string $username, string $domain): bool
+    {
+        $result = $this->listWebDomain($username, $domain);
+
+        $data = $result['data'] ?? [];
+
+        if (isset($data[$domain])) {
+            $domainData = $data[$domain];
+
+            return $this->hestiaSuspendedValueIsTrue(
+                $domainData['SUSPENDED'] ?? $domainData['suspended'] ?? null
+            );
+        }
+
+        foreach ($data as $domainData) {
+            if (is_array($domainData)) {
+                return $this->hestiaSuspendedValueIsTrue(
+                    $domainData['SUSPENDED'] ?? $domainData['suspended'] ?? null
+                );
+            }
+        }
+
+        return false;
+    }
+
+    protected function hestiaSuspendedValueIsTrue(mixed $value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        $value = strtolower(trim((string) $value));
+
+        return in_array($value, [
+            'yes',
+            'true',
+            '1',
+            'suspended',
+            'disabled',
+        ], true);
+    }
 }
